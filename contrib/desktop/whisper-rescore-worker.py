@@ -45,7 +45,6 @@ def main() -> int:
         try:
             kwargs = {
                 "suppress_nst": True,
-                "suppress_non_speech_tokens": True,
                 "no_speech_thold": 0.85,
                 "no_context": True,
             }

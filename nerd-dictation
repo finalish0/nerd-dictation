@@ -1095,7 +1095,7 @@ def vosk_phrase_is_noise(
     words = [w for w in (text or "").split() if w]
     if rms < min_rms:
         return True
-    if duration_sec < 0.35:
+    if duration_sec < 0.35 and rms < max(0.03, min_rms * 2.0):
         return True
     if (
         len(words) <= 2
@@ -1333,7 +1333,7 @@ def text_from_vosk_pipe(
         nonlocal json_text_partial_prev
         nonlocal pending_space
         nonlocal abort_assign
-        nonlocal phrase_pcm, fragments, whisper_stale, whisper_queue, whisper_submit_idx
+        nonlocal phrase_pcm, fragments, whisper_queue, whisper_submit_idx
 
         if in_emit:
             abort_assign = True
@@ -1344,7 +1344,6 @@ def text_from_vosk_pipe(
         pending_space = False
         phrase_pcm = bytearray()
         fragments = []
-        whisper_stale = True
         whisper_queue = []
         whisper_submit_idx = -1
 
@@ -1371,15 +1370,19 @@ def text_from_vosk_pipe(
             handled_any = True
             return
 
-        dur = len(phrase_pcm) / float(sample_rate * 2) if sample_rate else 0.0
-        rms = pcm_rms16(bytes(phrase_pcm)) if phrase_pcm else 0.0
-        if vosk_phrase_is_noise(text, rms, dur, vad_rms):
-            if (not is_partial_arg) and text_prev:
-                in_emit = True
-                handle_fn(len(text_prev), "")
-                in_emit = False
-                text_prev = ""
-            return
+        if not is_partial_arg:
+            dur = len(phrase_pcm) / float(sample_rate * 2) if sample_rate else 0.0
+            rms = pcm_rms16(bytes(phrase_pcm)) if phrase_pcm else 0.0
+            if vosk_phrase_is_noise(text, rms, dur, vad_rms):
+                sys.stderr.write(
+                    "[nd-debug] skip noise rms=%.4f dur=%.2f text=%r\n" % (rms, dur, text)
+                )
+                if text_prev:
+                    in_emit = True
+                    handle_fn(len(text_prev), "")
+                    in_emit = False
+                    text_prev = ""
+                return
 
         # Progressive support (type as you speak).
         if progressive_continuous:
@@ -1726,7 +1729,7 @@ def text_from_vosk_pipe(
 
     def do_suspend_pause() -> None:
         nonlocal has_ps, ps, stdout
-        nonlocal capture_epoch, orphan_ps
+        nonlocal capture_epoch, orphan_ps, whisper_stale
         global wtype_fail_ignored
 
         # Invalidate in-flight recognition *before* touching VOSK or the
@@ -1747,6 +1750,7 @@ def text_from_vosk_pipe(
 
         # Clear the buffer:
         handle_fn_suspended()
+        whisper_stale = True
 
         nonlocal verbose
         if verbose >= 1:
@@ -1809,7 +1813,7 @@ def text_from_vosk_pipe(
     # can cause reentrant runtime errors and other related bugs.
     def do_suspend_resume() -> None:
         nonlocal has_ps, ps, stdout
-        nonlocal rec, rec_en, en_final_words, capture_epoch, loop_epoch
+        nonlocal rec, rec_en, en_final_words, capture_epoch, loop_epoch, whisper_stale
         global wtype_fail_ignored
         wtype_fail_ignored = False
 
@@ -1844,6 +1848,7 @@ def text_from_vosk_pipe(
         capture_epoch += 1
         loop_epoch = capture_epoch
         handle_fn_suspended()
+        whisper_stale = False
         sys.stderr.write(
             "[nd-debug] suspend_resume: drained %d bytes preroll (%.0f ms)\n"
             % (discarded, capture_preroll_sec * 1000.0)
