@@ -25,6 +25,33 @@ case "${1:-}" in
     pulse off
     exit 0
     ;;
+  suspend)
+    pid=$(mainpid)
+    if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+      pulse off
+      exit 0
+    fi
+    echo "$pid" > "$PIDFILE" 2>/dev/null || true
+    st=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+    et=$(ps -o etimes= -p "$pid" 2>/dev/null || echo 999)
+    et=${et%% *}
+    case "$st" in
+      *T*) pulse off; exit 0 ;;
+      *R*)
+        if [ "${et:-0}" -lt 15 ]; then
+          pulse off
+          exit 0
+        fi
+        ;;
+    esac
+    kill -STOP "$pid" 2>/dev/null || exit 0
+    sleep 0.05
+    kill -USR1 "$pid" 2>/dev/null || true
+    sleep 0.05
+    kill -CONT "$pid" 2>/dev/null || true
+    pulse off
+    exit 0
+    ;;
 esac
 
 pid=$(mainpid)
@@ -58,24 +85,13 @@ freeze_suspend() {
   kill -CONT "$pid" 2>/dev/null || true
 }
 
-case "${1:-}" in
-  suspend)
-    case "$st" in
-      *T*) : ;;
-      *) freeze_suspend ;;
-    esac
-    pulse off
+case "$st" in
+  *T*)
+    "$ND" resume 2>>"$LOG" || true
+    pulse breathing
     ;;
   *)
-    case "$st" in
-      *T*)
-        "$ND" resume 2>>"$LOG" || true
-        pulse breathing
-        ;;
-      *)
-        freeze_suspend
-        pulse off
-        ;;
-    esac
+    freeze_suspend
+    pulse off
     ;;
 esac

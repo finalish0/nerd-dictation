@@ -19,6 +19,9 @@ systemctl --user enable --now nerd-dictation
 
 Wait until the process is stopped (`ps -o stat= -p $(systemctl --user show nerd-dictation -p MainPID --value)` → `T` / `Ts`) before sending signals. SIGUSR1 during model load kills the daemon.
 
+The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
+it calls `nerd-dictation-toggle suspend` first, then send/focus.
+
 ## Sway
 
 ```sh
