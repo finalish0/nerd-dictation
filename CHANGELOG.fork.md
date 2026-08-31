@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Freeze VOSK on silence, then Whisper
+
+After ~200 ms quiet, live text stops rewriting. After ~450 ms the
+phrase is finalized and Whisper runs. Room noise no longer starts a
+new VOSK pass in that gap.
+
+## 2026-08-31
+
 ### Whisper replace dropped the first letter in a terminal
 
 A full-phrase rescore is many Backspaces, then the new text (often a

@@ -1199,6 +1199,20 @@ def text_from_vosk_pipe(
         vad_rms = float(os.environ.get("NERD_DICTATION_VAD_RMS", "0.012"))
     except ValueError:
         vad_rms = 0.012
+    try:
+        silence_rms = float(os.environ.get("NERD_DICTATION_SILENCE_RMS", "0.005"))
+    except ValueError:
+        silence_rms = 0.005
+    try:
+        silence_freeze_ms = float(os.environ.get("NERD_DICTATION_FREEZE_MS", "200"))
+    except ValueError:
+        silence_freeze_ms = 200.0
+    try:
+        silence_lock_ms = float(os.environ.get("NERD_DICTATION_SILENCE_MS", "450"))
+    except ValueError:
+        silence_lock_ms = 450.0
+    quiet_ms = 0.0
+    phrase_locked = False
 
     if whisper_model in ("-", "none", "off"):
         whisper_model = ""
@@ -1333,7 +1347,7 @@ def text_from_vosk_pipe(
         nonlocal json_text_partial_prev
         nonlocal pending_space
         nonlocal abort_assign
-        nonlocal phrase_pcm, fragments, whisper_queue, whisper_submit_idx
+        nonlocal phrase_pcm, fragments, whisper_queue, whisper_submit_idx, quiet_ms, phrase_locked
 
         if in_emit:
             abort_assign = True
@@ -1346,6 +1360,8 @@ def text_from_vosk_pipe(
         fragments = []
         whisper_queue = []
         whisper_submit_idx = -1
+        quiet_ms = 0.0
+        phrase_locked = False
 
         if not (progressive and progressive_continuous):
             text_list.clear()
@@ -1935,45 +1951,81 @@ def text_from_vosk_pipe(
             continue
 
         if data:
-            max_pcm = sample_rate * 2 * 30
-            phrase_pcm.extend(data)
-            if len(phrase_pcm) > max_pcm:
-                del phrase_pcm[: len(phrase_pcm) - max_pcm]
-            ok = rec.AcceptWaveform(data)
-            if rec_en is not None:
-                ok_en = rec_en.AcceptWaveform(data)
-                if ok_en:
-                    try:
-                        en_done = json.loads(rec_en.FinalResult() or "{}")
-                    except Exception:
-                        en_done = {}
-                    en_final_words.extend(_vosk_words(en_done, "result", "text"))
-            if suspend or capture_epoch != loop_epoch:
-                continue
-            if ok:
-                json_text_partial_prev = ""
-                json_text = rec_handle_fn_wrapper_from_final_result()
-                pcm_copy = bytes(phrase_pcm)
-                phrase_pcm.clear()
-                if whisper_submit_idx >= 0 and whisper_submit_idx < len(fragments):
-                    frag = fragments[whisper_submit_idx]
-                    idx = whisper_submit_idx
-                    whisper_submit_idx = -1
-                    _whisper_submit(pcm_copy, str(frag.get("vosk") or ""), str(frag.get("typed") or ""), idx)
-                else:
-                    whisper_submit_idx = -1
+            chunk_ms = 1000.0 * len(data) / float(max(1, sample_rate * 2))
+            speaking = pcm_rms16(data) >= silence_rms
+            if speaking:
+                quiet_ms = 0.0
+                phrase_locked = False
             else:
-                json_text, json_text_partial_prev = rec_handle_fn_wrapper_from_partial_result(json_text_partial_prev)
+                quiet_ms += chunk_ms
 
-            # Monitor the partial output.
-            # Finish if no changes are made for `timeout` seconds.
-            if use_timeout:
-                if json_text != timeout_text_prev:
-                    timeout_text_prev = json_text
-                    timeout_time_prev = time.time()
-                elif time.time() - timeout_time_prev > timeout:
-                    if code == 0:
-                        code = 1  # The time was exceeded, exit!
+            # After the speaker stopped: do not let VOSK keep rewriting the
+            # phrase, and do not start a new "nein" utterance on room noise.
+            if phrase_locked and not speaking:
+                pass
+            else:
+                max_pcm = sample_rate * 2 * 30
+                phrase_pcm.extend(data)
+                if len(phrase_pcm) > max_pcm:
+                    del phrase_pcm[: len(phrase_pcm) - max_pcm]
+                ok = rec.AcceptWaveform(data)
+                if rec_en is not None:
+                    ok_en = rec_en.AcceptWaveform(data)
+                    if ok_en:
+                        try:
+                            en_done = json.loads(rec_en.FinalResult() or "{}")
+                        except Exception:
+                            en_done = {}
+                        en_final_words.extend(_vosk_words(en_done, "result", "text"))
+                if suspend or capture_epoch != loop_epoch:
+                    continue
+                force_final = (
+                    (not ok)
+                    and progressive
+                    and text_prev
+                    and quiet_ms >= silence_lock_ms
+                )
+                if force_final:
+                    ok = True
+                    phrase_locked = True
+                    sys.stderr.write(
+                        "[nd-debug] silence final %.0f ms (Whisper next)\n" % quiet_ms
+                    )
+                if ok:
+                    json_text_partial_prev = ""
+                    json_text = rec_handle_fn_wrapper_from_final_result()
+                    pcm_copy = bytes(phrase_pcm)
+                    phrase_pcm.clear()
+                    phrase_locked = True
+                    if whisper_submit_idx >= 0 and whisper_submit_idx < len(fragments):
+                        frag = fragments[whisper_submit_idx]
+                        idx = whisper_submit_idx
+                        whisper_submit_idx = -1
+                        _whisper_submit(
+                            pcm_copy,
+                            str(frag.get("vosk") or ""),
+                            str(frag.get("typed") or ""),
+                            idx,
+                        )
+                    else:
+                        whisper_submit_idx = -1
+                elif progressive and quiet_ms >= silence_freeze_ms and text_prev:
+                    # Freeze live text; wait for silence-final or more speech.
+                    json_text = json_text_partial_prev
+                else:
+                    json_text, json_text_partial_prev = rec_handle_fn_wrapper_from_partial_result(
+                        json_text_partial_prev
+                    )
+
+                # Monitor the partial output.
+                # Finish if no changes are made for `timeout` seconds.
+                if use_timeout:
+                    if json_text != timeout_text_prev:
+                        timeout_text_prev = json_text
+                        timeout_time_prev = time.time()
+                    elif time.time() - timeout_time_prev > timeout:
+                        if code == 0:
+                            code = 1  # The time was exceeded, exit!
 
         _whisper_poll()
 
