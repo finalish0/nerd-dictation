@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Faster Backspace burst on Whisper replace
+
+Live word updates keep the slow wtype delays. A whole-phrase rescore
+(≥8 deletes) uses a shorter key delay so the old VOSK line is not
+visible for so long.
+
+## 2026-08-31
+
 ### Freeze VOSK on silence, then Whisper
 
 After ~200 ms quiet, live text stops rewriting. After ~450 ms the

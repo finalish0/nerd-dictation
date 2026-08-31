@@ -275,10 +275,11 @@ def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
     The remaining text is a single ``--`` argument so internal spaces stay
     intact and a leading ``-`` is not parsed as a flag.
     """
+    bulk = delete_prev_chars >= 8
     args: List[str] = [
         "wtype",
         "-d",
-        "8",
+        "3" if bulk else "8",
         "-s",
         "40",
         "-M",
@@ -289,9 +290,10 @@ def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
         "20",
     ]
     if delete_prev_chars:
-        args += ["-s", "8"]
+        gap = "1" if bulk else "6"
+        args += ["-s", "4" if bulk else "8"]
         for _ in range(delete_prev_chars):
-            args += ["-k", "backSpace", "-s", "6"]
+            args += ["-k", "backSpace", "-s", gap]
         # After a long backspace burst, terminals often drop the next printable
         # (Whisper replace of a whole phrase). Warm Shift again so that is not
         # the first letter of the new text.

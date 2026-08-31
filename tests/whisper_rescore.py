@@ -94,6 +94,12 @@ class TestWtypeArgs(unittest.TestCase):
         self.assertGreaterEqual(len(shifts), 2)
         self.assertGreater(max(shifts), max(bs))
         self.assertEqual(args[-2:], ["--", "Jetzt"])
+        self.assertEqual(args[2], "8")
+
+    def test_bulk_backspaces_are_faster(self) -> None:
+        args = nd.build_wtype_args(40, "Jetzt hat es funktioniert. ")
+        self.assertEqual(args[2], "3")
+        self.assertGreaterEqual(args.count("backSpace"), 40)
 
 
 class TestWriteWav(unittest.TestCase):
