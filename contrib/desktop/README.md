@@ -17,7 +17,15 @@ systemctl --user daemon-reload
 systemctl --user enable --now nerd-dictation
 ```
 
-Wait until the process is stopped (`ps -o stat= -p $(systemctl --user show nerd-dictation -p MainPID --value)` → `T` / `Ts`) before sending signals. SIGUSR1 during model load kills the daemon.
+Wait until the process is stopped (`nerd-dictation-toggle status` → state `T`/`Ts`) before the first mic press. SIGUSR1 during model load kills the daemon.
+
+Master switch (no Sway edits; Ctrl+Space stays bound but does nothing while off):
+
+```sh
+nerd-dictation-toggle off     # disable --now, mic is a no-op
+nerd-dictation-toggle on      # enable --now, wait for the model, then mic works
+nerd-dictation-toggle status
+```
 
 The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
 it calls `nerd-dictation-toggle suspend` first, then send/focus.

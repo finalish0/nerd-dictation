@@ -1,5 +1,6 @@
 #!/bin/sh
 # Toggle / suspend / stop the warm nerd-dictation user service.
+# Master switch: on | off  (no Sway edits). Mic is a no-op while off.
 # Optional: AhaKey LED via $AHAKEY (pulse breathing | off).
 set -eu
 
@@ -7,9 +8,11 @@ ND="${ND:-$HOME/git/nerd-dictation/nerd-dictation}"
 AHAKEY="${AHAKEY:-$HOME/git/ahakey-x1/ahakey.sh}"
 SERVICE=nerd-dictation.service
 LOG="${LOG:-$HOME/.local/state/nerd-dictation.log}"
+FLAGDIR="${FLAGDIR:-$HOME/.config/nerd-dictation}"
+FLAG="$FLAGDIR/disabled"
 PIDFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/nerd-dictation.pid"
 
-mkdir -p "$(dirname "$LOG")"
+mkdir -p "$(dirname "$LOG")" "$FLAGDIR"
 
 pulse() {
   if [ -x "$AHAKEY" ]; then
@@ -19,7 +22,45 @@ pulse() {
 
 mainpid() { systemctl --user show "$SERVICE" -p MainPID --value 2>/dev/null; }
 
+master_off() {
+  date -Iseconds > "$FLAG"
+  systemctl --user disable --now "$SERVICE" 2>>"$LOG" || true
+  pulse off
+  echo "nerd-dictation: off (mic and checkmark ignore it; sway binding stays)"
+}
+
+master_on() {
+  rm -f "$FLAG"
+  systemctl --user enable --now "$SERVICE" >>"$LOG" 2>&1 || true
+  pulse off
+  echo "nerd-dictation: on (wait ~10s for the model, then mic toggles recording)"
+}
+
 case "${1:-}" in
+  off|disable)
+    master_off
+    exit 0
+    ;;
+  on|enable)
+    master_on
+    exit 0
+    ;;
+  status)
+    if [ -f "$FLAG" ]; then
+      echo "master: off"
+    else
+      echo "master: on"
+    fi
+    systemctl --user is-enabled "$SERVICE" 2>/dev/null || true
+    systemctl --user is-active "$SERVICE" 2>/dev/null || true
+    pid=$(mainpid)
+    if [ -n "$pid" ] && [ "$pid" != "0" ]; then
+      echo "pid: $pid  state: $(ps -o stat= -p "$pid" 2>/dev/null || echo gone)"
+    else
+      echo "pid: none"
+    fi
+    exit 0
+    ;;
   stop)
     systemctl --user stop "$SERVICE" 2>>"$LOG" || true
     pulse off
@@ -53,6 +94,11 @@ case "${1:-}" in
     exit 0
     ;;
 esac
+
+if [ -f "$FLAG" ]; then
+  pulse off
+  exit 0
+fi
 
 pid=$(mainpid)
 
