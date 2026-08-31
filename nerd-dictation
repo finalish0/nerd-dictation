@@ -1206,13 +1206,13 @@ def text_from_vosk_pipe(
     except ValueError:
         silence_rms = 0.005
     try:
-        silence_freeze_ms = float(os.environ.get("NERD_DICTATION_FREEZE_MS", "250"))
+        silence_freeze_ms = float(os.environ.get("NERD_DICTATION_FREEZE_MS", "280"))
     except ValueError:
-        silence_freeze_ms = 250.0
+        silence_freeze_ms = 280.0
     try:
-        silence_lock_ms = float(os.environ.get("NERD_DICTATION_SILENCE_MS", "550"))
+        silence_lock_ms = float(os.environ.get("NERD_DICTATION_SILENCE_MS", "700"))
     except ValueError:
-        silence_lock_ms = 550.0
+        silence_lock_ms = 700.0
     quiet_ms = 0.0
     phrase_locked = False
 

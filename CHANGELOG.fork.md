@@ -41,7 +41,7 @@ visible for so long.
 
 ### Freeze VOSK on silence, then Whisper
 
-After ~250 ms quiet, live text stops rewriting. After ~550 ms the
+After ~280 ms quiet, live text stops rewriting. After ~700 ms the
 phrase is finalized and Whisper runs. Room noise no longer starts a
 new VOSK pass in that gap.
 
