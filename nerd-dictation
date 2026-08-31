@@ -292,7 +292,10 @@ def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
         args += ["-s", "8"]
         for _ in range(delete_prev_chars):
             args += ["-k", "backSpace", "-s", "6"]
-        args += ["-s", "15"]
+        # After a long backspace burst, terminals often drop the next printable
+        # (Whisper replace of a whole phrase). Warm Shift again so that is not
+        # the first letter of the new text.
+        args += ["-s", "20", "-M", "shift", "-m", "shift", "-s", "20"]
 
     i = 0
     n = len(text)
@@ -1627,13 +1630,9 @@ def text_from_vosk_pipe(
             if desired[i] != on_screen[i]:
                 match = i
                 break
+        # No Chrome letter-overlap here: that extra backspace eats the first
+        # character in a terminal when Whisper retypes a whole fragment.
         out = desired[match:]
-        if match == len(on_screen) and match > 0:
-            match -= 1
-            out = desired[match:]
-        while match > 0 and (not out or out[0] in (" ", "\t", "\u00a0")):
-            match -= 1
-            out = desired[match:]
         handle_fn(len(on_screen) - match, out)
 
     def _whisper_poll() -> None:

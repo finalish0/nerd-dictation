@@ -85,6 +85,17 @@ class TestVoskNoise(unittest.TestCase):
         self.assertLess(nd.pcm_rms16(b"\x00\x00" * 800), 0.001)
 
 
+class TestWtypeArgs(unittest.TestCase):
+    def test_shift_warmup_after_backspaces(self) -> None:
+        args = nd.build_wtype_args(3, "Jetzt")
+        bs = [i for i, a in enumerate(args) if a == "backSpace"]
+        shifts = [i for i, a in enumerate(args) if a == "shift"]
+        self.assertGreaterEqual(len(bs), 3)
+        self.assertGreaterEqual(len(shifts), 2)
+        self.assertGreater(max(shifts), max(bs))
+        self.assertEqual(args[-2:], ["--", "Jetzt"])
+
+
 class TestWriteWav(unittest.TestCase):
     def test_header(self) -> None:
         pcm = b"\x00\x00" * 160

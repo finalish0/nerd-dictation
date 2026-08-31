@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Whisper replace dropped the first letter in a terminal
+
+A full-phrase rescore is many Backspaces, then the new text (often a
+capital). Alacritty drops that first printable. Warm Shift again *after*
+the deletes, and do not use the Chrome letter-overlap on this path.
+
+## 2026-08-31
+
 ### Whisper rescored per fragment, not the whole take
 
 Each VOSK final is one span. Whisper only rewrites that span and keeps
