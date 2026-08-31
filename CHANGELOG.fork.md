@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Live VOSK uses the small German model
+
+`--vosk-model-dir` is `vosk-model-small-de-0.15` (~90 MB). The large
+`de-0.21` stays on disk. Whisper still rescored finished fragments, so
+live quality can be worse and the daemon lighter.
+
+## 2026-08-31
+
 ### Faster Backspace burst on Whisper replace
 
 Live word updates keep the slow wtype delays. A whole-phrase rescore

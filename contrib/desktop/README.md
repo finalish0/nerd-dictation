@@ -5,7 +5,8 @@ daemon, mic toggle, Sway key, and “send message → freeze dictation”
 hooks. **None of this belongs on `main` or in an upstream PR.**
 
 Paths assume the clone lives at `$HOME/git/nerd-dictation` and the
-German VOSK model at `$HOME/.local/share/vosk-models/vosk-model-de-0.21`.
+German VOSK model at `$HOME/.local/share/vosk-models/vosk-model-small-de-0.15`
+(large `de-0.21` is still on disk if you want it back).
 Edit if yours differ. AhaKey LED pulses are optional (`ahakey.sh`).
 
 ## Install (user systemd + toggle)
