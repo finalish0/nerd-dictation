@@ -33,7 +33,8 @@ so the combo is not swallowed. `on` puts the bind back. Super+n lives in the mai
 Sway config so it still works when dictation is off.
 
 The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
-it calls `nerd-dictation-toggle suspend` first, then send/focus.
+it calls `nerd-dictation-toggle suspend` first, then Enter into the focused
+window. It does not jump to Grok/OpenCode.
 
 ## Sway
 
