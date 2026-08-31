@@ -5,13 +5,6 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
-### Fast wtype only outside the browser
-
-Sway `app_id` decides: Alacritty may use the quick Backspace burst.
-Chrome/Brave keep the slow delays so spaces and the first letter survive.
-
-## 2026-08-31
-
 ### Faster Backspace burst on Whisper replace
 
 Live word updates keep the slow wtype delays. A whole-phrase rescore
