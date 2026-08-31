@@ -70,12 +70,14 @@ React textarea in a real Chrome tab (spaces).
 - Guard `text_prev` if `SIGUSR1` arrives mid-emit (`in_emit` /
   `abort_assign`).
 
-## What we did *not* put here
+## Desktop glue (this branch only)
 
-- systemd `nerd-dictation.service`, `nerd-dictation-toggle`, Sway
-  `Ctrl+Space`, AhaKey LED, OpenCode plugin, Grok `UserPromptSubmit`
-  hook — those stay on the machine (see ahakey-x1 docs).
-- No vendored VOSK models.
+systemd unit, mic toggle, Sway `Ctrl+Space`, OpenCode plugin and Grok
+`UserPromptSubmit` freeze live under [`contrib/desktop/`](contrib/desktop/).
+They are **not** on `main` and are not meant for an upstream PR. See
+[`contrib/desktop/README.md`](contrib/desktop/README.md).
+
+No vendored VOSK models.
 
 ## Upstream PRs
 

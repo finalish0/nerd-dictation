@@ -1,0 +1,81 @@
+#!/bin/sh
+# Toggle / suspend / stop the warm nerd-dictation user service.
+# Optional: AhaKey LED via $AHAKEY (pulse breathing | off).
+set -eu
+
+ND="${ND:-$HOME/git/nerd-dictation/nerd-dictation}"
+AHAKEY="${AHAKEY:-$HOME/git/ahakey-x1/ahakey.sh}"
+SERVICE=nerd-dictation.service
+LOG="${LOG:-$HOME/.local/state/nerd-dictation.log}"
+PIDFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/nerd-dictation.pid"
+
+mkdir -p "$(dirname "$LOG")"
+
+pulse() {
+  if [ -x "$AHAKEY" ]; then
+    "$AHAKEY" pulse "$1" || true
+  fi
+}
+
+mainpid() { systemctl --user show "$SERVICE" -p MainPID --value 2>/dev/null; }
+
+case "${1:-}" in
+  stop)
+    systemctl --user stop "$SERVICE" 2>>"$LOG" || true
+    pulse off
+    exit 0
+    ;;
+esac
+
+pid=$(mainpid)
+
+if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+  systemctl --user start "$SERVICE" >>"$LOG" 2>&1
+  pid=$(mainpid)
+fi
+
+echo "$pid" > "$PIDFILE" 2>/dev/null || true
+
+i=0
+while :; do
+  st=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+  case "$st" in
+    *R*)
+      i=$((i + 1))
+      if [ "$i" -gt 60 ]; then pulse off; exit 0; fi
+      sleep 0.5
+      continue
+      ;;
+    *) break ;;
+  esac
+done
+
+freeze_suspend() {
+  kill -STOP "$pid" 2>/dev/null || return 0
+  sleep 0.05
+  kill -USR1 "$pid" 2>/dev/null || true
+  sleep 0.05
+  kill -CONT "$pid" 2>/dev/null || true
+}
+
+case "${1:-}" in
+  suspend)
+    case "$st" in
+      *T*) : ;;
+      *) freeze_suspend ;;
+    esac
+    pulse off
+    ;;
+  *)
+    case "$st" in
+      *T*)
+        "$ND" resume 2>>"$LOG" || true
+        pulse breathing
+        ;;
+      *)
+        freeze_suspend
+        pulse off
+        ;;
+    esac
+    ;;
+esac

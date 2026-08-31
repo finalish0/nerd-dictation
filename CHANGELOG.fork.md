@@ -62,9 +62,11 @@ First warm-daemon setup (not in this repo): systemd user unit with
 tool, German VOSK model. A lot of the signal and wtype hardening comes
 from that day.
 
-## Not in this fork
+## Not on `main` (desktop glue on `local`)
 
-- `~/.local/bin/nerd-dictation-toggle`
-- `~/.config/systemd/user/nerd-dictation.service`
-- Sway binding, AhaKey LED
-- OpenCode plugin / Grok hook `UserPromptSubmit` → suspend
+Shipped under `contrib/desktop/` on this branch only:
+
+- `nerd-dictation-toggle`
+- systemd user unit (`nerd-dictation.service`)
+- Sway `Ctrl+Space` snippet
+- OpenCode plugin + Grok `UserPromptSubmit` freeze
