@@ -19,13 +19,16 @@ systemctl --user enable --now nerd-dictation
 
 Wait until the process is stopped (`nerd-dictation-toggle status` → state `T`/`Ts`) before the first mic press. SIGUSR1 during model load kills the daemon.
 
-Master switch (no Sway edits; Ctrl+Space stays bound but does nothing while off):
+Master switch (one command; do not edit Sway by hand after the include is in place):
 
 ```sh
-nerd-dictation-toggle off     # disable --now, mic is a no-op
-nerd-dictation-toggle on      # enable --now, wait for the model, then mic works
+nerd-dictation-toggle off     # stop daemon, unbind Ctrl+Space (Grok voice can use it)
+nerd-dictation-toggle on      # start daemon, bind Ctrl+Space as the mic
 nerd-dictation-toggle status
 ```
+
+`off` writes an empty `~/.config/sway/nerd-dictation.conf` and `unbindsym Ctrl+Space`,
+so the combo is not swallowed. `on` puts the bind back.
 
 The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
 it calls `nerd-dictation-toggle suspend` first, then send/focus.
@@ -36,13 +39,13 @@ it calls `nerd-dictation-toggle suspend` first, then send/focus.
 install -Dm644 contrib/desktop/sway-nerd-dictation.conf ~/.config/sway/nerd-dictation.conf
 ```
 
-Then in `~/.config/sway/config`:
+Then in `~/.config/sway/config` (once):
 
 ```
 include ~/.config/sway/nerd-dictation.conf
 ```
 
-Reload: `swaymsg reload`. AhaKey mic is bound to `Ctrl+Space`.
+That file is rewritten by `on`/`off`. Reload once after adding the include.
 
 ## OpenCode
 
