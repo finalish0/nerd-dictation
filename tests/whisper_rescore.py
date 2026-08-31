@@ -64,11 +64,15 @@ class TestWhisperShouldApply(unittest.TestCase):
 
 class TestVoskNoise(unittest.TestCase):
     def test_quiet_is_noise(self) -> None:
+        self.assertTrue(nd.vosk_filler_only("nein"))
+        self.assertTrue(nd.vosk_filler_only("nun einen"))
         self.assertTrue(nd.vosk_phrase_is_noise("nein", 0.004, 0.6))
-        self.assertTrue(nd.vosk_phrase_is_noise("nun einen", 0.008, 0.8))
 
-    def test_spoken_nein_kept(self) -> None:
-        self.assertFalse(nd.vosk_phrase_is_noise("nein", 0.08, 0.5))
+    def test_real_sentence_kept_even_at_low_rms(self) -> None:
+        self.assertFalse(nd.vosk_filler_only("jetzt teste ich ob was ankommt"))
+        self.assertFalse(
+            nd.vosk_phrase_is_noise("jetzt teste ich ob was ankommt", 0.003, 3.0)
+        )
 
     def test_real_sentence_kept(self) -> None:
         self.assertFalse(

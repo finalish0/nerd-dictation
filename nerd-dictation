@@ -1088,23 +1088,20 @@ def pcm_rms16(pcm: bytes) -> float:
     return (acc / float(n)) ** 0.5 / 32768.0
 
 
+def vosk_filler_only(text: str) -> bool:
+    """True for 1–2 short filler tokens (room-noise VOSK output)."""
+    words = [w.casefold().strip(".,!?") for w in (text or "").split() if w]
+    if not words or len(words) > 2:
+        return False
+    return all(w in _VOSK_FILLER for w in words)
+
+
 def vosk_phrase_is_noise(
     text: str, rms: float, duration_sec: float, min_rms: float = 0.012
 ) -> bool:
-    """True for room noise / filler that should not be typed or rescored."""
-    words = [w for w in (text or "").split() if w]
-    if rms < min_rms:
-        return True
-    if duration_sec < 0.35 and rms < max(0.03, min_rms * 2.0):
-        return True
-    if (
-        len(words) <= 2
-        and duration_sec < 1.2
-        and rms < max(0.04, min_rms * 3.0)
-        and all(w.casefold().strip(".,!?") in _VOSK_FILLER for w in words)
-    ):
-        return True
-    return False
+    """True only for short filler; never for a real phrase (RMS is too mic-dependent)."""
+    del rms, duration_sec, min_rms
+    return vosk_filler_only(text)
 
 
 def whisper_text_is_junk(text: str) -> bool:
@@ -1370,18 +1367,15 @@ def text_from_vosk_pipe(
             handled_any = True
             return
 
-        if not is_partial_arg:
-            dur = len(phrase_pcm) / float(sample_rate * 2) if sample_rate else 0.0
-            rms = pcm_rms16(bytes(phrase_pcm)) if phrase_pcm else 0.0
-            if vosk_phrase_is_noise(text, rms, dur, vad_rms):
-                sys.stderr.write(
-                    "[nd-debug] skip noise rms=%.4f dur=%.2f text=%r\n" % (rms, dur, text)
-                )
-                if text_prev:
-                    in_emit = True
-                    handle_fn(len(text_prev), "")
-                    in_emit = False
-                    text_prev = ""
+        if vosk_filler_only(text):
+            # Room noise often becomes "nein"/"nun". Do not type it, and never
+            # delete a real sentence that was already on screen.
+            if (not is_partial_arg) and text_prev and vosk_filler_only(text_prev):
+                in_emit = True
+                handle_fn(len(text_prev), "")
+                in_emit = False
+                text_prev = ""
+            if not text_prev or vosk_filler_only(text_prev):
                 return
 
         # Progressive support (type as you speak).
