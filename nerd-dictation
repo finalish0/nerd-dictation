@@ -259,39 +259,81 @@ def simulate_typing_with_dotool(delete_prev_chars: int, text: str, cmd: str = "d
 # -----------------------------------------------------------------------------
 # Simulate Input: WTYPE
 #
-def simulate_typing_with_wtype(delete_prev_chars: int, text: str) -> None:
-    cmd = "wtype"
+active_wtype_proc: "Optional[subprocess.Popen]" = None
+wtype_fail_ignored = False
 
+
+def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
+    """Build a wtype argv that Chromium will actually insert spaces for.
+
+    Chromium on Wayland often drops the first key after a virtual-keyboard
+    keymap upload, and drops a leading space in a text argument. Progressive
+    dictation emits the next word as ``" erzähle"``, so the space is both
+    leading *and* first — result: ``icherzähleeinekleinegeschichte``.
+
+    Shift warms the keymap (no character). Leading blanks become ``-k space``.
+    The remaining text is a single ``--`` argument so internal spaces stay
+    intact and a leading ``-`` is not parsed as a flag.
+    """
+    args: List[str] = [
+        "wtype",
+        "-d",
+        "8",
+        "-s",
+        "40",
+        "-M",
+        "shift",
+        "-m",
+        "shift",
+        "-s",
+        "20",
+    ]
+    if delete_prev_chars:
+        args += ["-s", "8"]
+        for _ in range(delete_prev_chars):
+            args += ["-k", "backSpace", "-s", "6"]
+        args += ["-s", "15"]
+
+    i = 0
+    n = len(text)
+    while i < n and text[i] in (" ", "\t", "\u00a0"):
+        args += ["-s", "12", "-k", "space"]
+        i += 1
+    rest = text[i:]
+    if rest:
+        args.extend(["--", rest])
+    return args
+
+
+def simulate_typing_with_wtype(delete_prev_chars: int, text: str) -> None:
     # No setup/tear-down.
     if delete_prev_chars == SIMULATE_INPUT_CODE_COMMAND:
         return
 
-    if delete_prev_chars:
-        run_command_or_exit_on_failure(
-            [
-                cmd,
-                "-s",
-                "5",
-                *(["-k", "backSpace"] * delete_prev_chars),
-            ]
-        )
+    if delete_prev_chars <= 0 and not text:
+        return
 
-    run_command_or_exit_on_failure(
-        [
-            cmd,
-            text,
-        ]
-    )
+    args = build_wtype_args(delete_prev_chars, text)
+    global active_wtype_proc, wtype_fail_ignored
+    sys.stderr.write("[nd-debug] emit: del=%d text=%r argv=%r\n" % (delete_prev_chars, text, args[1:]))
+    try:
+        proc = subprocess.Popen(args)
+    except OSError as ex:
+        sys.stderr.write("Failed to spawn {!r}: {!r}\n".format(args, ex))
+        sys.exit(1)
+    active_wtype_proc = proc
+    proc.wait()
+    active_wtype_proc = None
+    if proc.returncode != 0 and not wtype_fail_ignored:
+        sys.exit(1)
 
 
-# -----------------------------------------------------------------------------
-# Simulate Input: STDOUT
-#
 def simulate_typing_with_stdout(delete_prev_chars: int, text: str) -> None:
     # No setup/tear-down.
     if delete_prev_chars == SIMULATE_INPUT_CODE_COMMAND:
         return
 
+    sys.stderr.write("[nd-debug] emit: del=%d text=%r\n" % (delete_prev_chars, text))
     if delete_prev_chars:
         sys.stdout.write("\x08" * delete_prev_chars)
 
@@ -878,7 +920,10 @@ def recording_proc_with_non_blocking_stdout(
             "--channels=1",
             *(("--device=%s" % pulse_device_name,) if pulse_device_name else ()),
             "--format=s16ne",
-            "--latency=10",
+            # 10 bytes was parsed as a 10-byte latency request and ignored.
+            # A small msec latency keeps the capture buffer short so a resume
+            # is less likely to ingest the tail of the previous utterance.
+            "--latency-msec=20",
         )
     elif input_method == "SOX":
         cmd = (
@@ -1003,6 +1048,29 @@ def text_from_vosk_pipe(
     if progressive:
         text_prev = ""
 
+    # Local patch: guard against the suspend signal interrupting
+    # handle_fn_wrapper between typing and updating text_prev.
+    in_emit = False
+    abort_assign = False
+
+    # Local patch: emit the phrase-boundary space merged into the next
+    # emission instead of a standalone space (some apps drop lone events).
+    pending_space = False
+
+    # Bumped on every suspend/resume so an in-flight AcceptWaveform/emit from
+    # the previous session cannot type after the next one has started.
+    capture_epoch = 0
+    loop_epoch = 0
+    orphan_ps = None
+
+    # USB capture devices (Samson Meteor) dump stale ring-buffer samples for a
+    # few hundred milliseconds after open. Drop that preroll so the tail of
+    # the previous utterance cannot leak into the next dictation.
+    try:
+        capture_preroll_sec = float(os.environ.get("NERD_DICTATION_PREROLL_SEC", "0.50"))
+    except ValueError:
+        capture_preroll_sec = 0.50
+
     # Track this to prevent excessive load when the "partial" result doesn't change.
     json_text_partial_prev = ""
 
@@ -1013,10 +1081,16 @@ def text_from_vosk_pipe(
         nonlocal handled_any
         nonlocal text_prev
         nonlocal json_text_partial_prev
+        nonlocal pending_space
+        nonlocal abort_assign
+
+        if in_emit:
+            abort_assign = True
 
         handled_any = False
         text_prev = ""
         json_text_partial_prev = ""
+        pending_space = False
 
         if not (progressive and progressive_continuous):
             text_list.clear()
@@ -1024,6 +1098,13 @@ def text_from_vosk_pipe(
     def handle_fn_wrapper(text: str, is_partial_arg: bool) -> None:
         nonlocal handled_any
         nonlocal text_prev
+        nonlocal pending_space
+        nonlocal in_emit
+        nonlocal abort_assign
+
+        # A suspend/resume raced with this recognition result.
+        if capture_epoch != loop_epoch:
+            return
 
         # Simple deferred text input, just accumulate values in a list (finish entering text on exit).
         if not progressive:
@@ -1039,20 +1120,47 @@ def text_from_vosk_pipe(
         else:
             text_curr = process_fn(" ".join(text_list + [text]))
 
-        if text_curr != text_prev:
-            match = min(len(text_curr), len(text_prev))
-            for i in range(min(len(text_curr), len(text_prev))):
-                if text_curr[i] != text_prev[i]:
+        emitted_final_diff = False
+        # Chromium/wtype drop a leading space on each new virtual-keyboard
+        # client. Keep the separator as a TRAILING space on screen so the
+        # next word is emitted as "erzähle " rather than " erzähle".
+        desired = text_curr
+        if progressive_continuous and text_curr and not text_curr.endswith(" "):
+            desired = text_curr + " "
+
+        if desired != text_prev:
+            match = min(len(desired), len(text_prev))
+            for i in range(min(len(desired), len(text_prev))):
+                if desired[i] != text_prev[i]:
                     match = i
                     break
 
-            # Emit text, deleting any previous incorrectly transcribed output
-            handle_fn(len(text_prev) - match, text_curr[match:])
+            out = desired[match:]
+            # Chrome drops a leading space (and sometimes the first character
+            # of a new virtual-keyboard client). Overlap already-typed
+            # characters so the emit starts with a letter and any space sits
+            # *inside* the text argument ("e über " not " über ").
+            if match == len(text_prev) and match > 0:
+                match -= 1
+                out = desired[match:]
+            while match > 0 and (not out or out[0] in (" ", "\t", "\u00a0")):
+                match -= 1
+                out = desired[match:]
+            if not is_partial_arg and progressive_continuous:
+                emitted_final_diff = True
+            in_emit = True
+            handle_fn(len(text_prev) - match, out)
+            in_emit = False
 
-            text_prev = text_curr
+            if abort_assign:
+                abort_assign = False
+            else:
+                text_prev = desired
 
         if not is_partial_arg:
             if progressive_continuous:
+                if not emitted_final_diff and desired:
+                    handle_fn(0, " ")
                 text_prev = ""
             else:
                 text_list.append(text)
@@ -1108,10 +1216,24 @@ def text_from_vosk_pipe(
 
     def do_suspend_pause() -> None:
         nonlocal has_ps, ps, stdout
-        rec_handle_fn_wrapper_from_final_result()
+        nonlocal capture_epoch, orphan_ps
+        global wtype_fail_ignored
 
-        # Don't include any of the current analysis when resuming.
-        rec.Reset()
+        # Invalidate in-flight recognition *before* touching VOSK or the
+        # capture child. rec.Reset() is not called here: this runs from a
+        # signal handler and may interrupt AcceptWaveform.
+        capture_epoch += 1
+
+        sys.stderr.write("[nd-debug] suspend_pause: has_ps=%s epoch=%d\n" % (has_ps, capture_epoch))
+
+        # Discard any un-finalized audio instead of flushing it as text.
+        # (Local patch: stale remainder must not leak into the next dictation.)
+        # (Local patch) Kill an in-flight typing subprocess so nothing is
+        # typed after the suspend lands; its failure exit is ignored.
+        wtype_fail_ignored = True
+        kill_proc = active_wtype_proc
+        if kill_proc is not None and kill_proc.poll() is None:
+            kill_proc.kill()
 
         # Clear the buffer:
         handle_fn_suspended()
@@ -1120,20 +1242,78 @@ def text_from_vosk_pipe(
         if verbose >= 1:
             sys.stderr.write("Recording suspended.\n")
 
-        # Close the recording process.
+        # Close the recording process. Do not wait() here: this function
+        # runs from a signal handler. The child is reaped on resume.
         if has_ps:
             # Support setting up input simulation state.
             handle_fn(SIMULATE_INPUT_CODE_COMMAND, "TEARDOWN")
 
-            stdout.close()
-            os.kill(ps.pid, signal.SIGINT)
-            del stdout, ps
+            try:
+                stdout.close()
+            except Exception:
+                pass
+            try:
+                os.kill(ps.pid, signal.SIGINT)
+            except OSError:
+                pass
+            orphan_ps = ps
+            try:
+                del stdout, ps
+            except Exception:
+                pass
             has_ps = False
+
+    def _reap_orphan_recorder() -> None:
+        nonlocal orphan_ps
+        if orphan_ps is None:
+            return
+        try:
+            orphan_ps.wait(timeout=0.35)
+        except subprocess.TimeoutExpired:
+            try:
+                orphan_ps.kill()
+                orphan_ps.wait(timeout=0.2)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        orphan_ps = None
+
+    def _drain_capture_preroll(stream: IO[bytes], seconds: float) -> int:
+        deadline = time.time() + seconds
+        discarded = 0
+        while time.time() < deadline:
+            if suspend:
+                break
+            try:
+                chunk = stream.read(block_size)
+            except (ValueError, OSError):
+                break
+            if chunk:
+                discarded += len(chunk)
+            else:
+                time.sleep(0.005)
+        return discarded
 
     # Warning: do not call do_suspend_resume() from a signal context because it
     # can cause reentrant runtime errors and other related bugs.
     def do_suspend_resume() -> None:
         nonlocal has_ps, ps, stdout
+        nonlocal rec, capture_epoch, loop_epoch
+        global wtype_fail_ignored
+        wtype_fail_ignored = False
+
+        _reap_orphan_recorder()
+
+        # Fresh recognizer + epoch so nothing from the paused session can emit.
+        capture_epoch += 1
+        if grammar_json == "":
+            rec = vosk.KaldiRecognizer(model, sample_rate)
+        else:
+            rec = vosk.KaldiRecognizer(model, sample_rate, grammar_json)
+        handle_fn_suspended()
+
+        sys.stderr.write("[nd-debug] suspend_resume epoch=%d\n" % capture_epoch)
 
         # Resume reading from the recording process.
         nonlocal verbose
@@ -1143,6 +1323,22 @@ def text_from_vosk_pipe(
         handle_fn(SIMULATE_INPUT_CODE_COMMAND, "SETUP")
         ps, stdout = recording_proc_start()
         has_ps = True
+
+        discarded = _drain_capture_preroll(stdout, capture_preroll_sec)
+        # If a suspend landed during the drain, the capture is already gone.
+        if suspend or not has_ps:
+            sys.stderr.write("[nd-debug] suspend_resume: aborted after draining %d bytes\n" % discarded)
+            return
+
+        # Anything that arrived during the drain never reached VOSK. Bump the
+        # epoch so a delayed emit from before the drain is also dropped.
+        capture_epoch += 1
+        loop_epoch = capture_epoch
+        handle_fn_suspended()
+        sys.stderr.write(
+            "[nd-debug] suspend_resume: drained %d bytes preroll (%.0f ms)\n"
+            % (discarded, capture_preroll_sec * 1000.0)
+        )
 
     def handle_sig_suspend_from_usr1(_signum: int, _frame: Optional[FrameType]) -> None:
         nonlocal suspend
@@ -1197,6 +1393,7 @@ def text_from_vosk_pipe(
         # and this look should not run.
         # This check is simply done to prevent any logic running before the process is actually suspended,
         # although in practice it doesn't look to be a problem.
+        loop_epoch = capture_epoch
         if suspend:
             continue
 
@@ -1212,6 +1409,9 @@ def text_from_vosk_pipe(
             else:
                 idle_time_prev = idle_time_curr
 
+        if suspend or capture_epoch != loop_epoch:
+            continue
+
         # Mostly the data read is quite small (under 1k).
         # Only the 1st entry in the loop reads a lot of data due to the time it takes to initialize the VOSK module.
         try:
@@ -1224,8 +1424,13 @@ def text_from_vosk_pipe(
             do_suspend_resume()
             continue
 
+        if suspend or capture_epoch != loop_epoch:
+            continue
+
         if data:
             ok = rec.AcceptWaveform(data)
+            if suspend or capture_epoch != loop_epoch:
+                continue
             if ok:
                 json_text_partial_prev = ""
                 json_text = rec_handle_fn_wrapper_from_final_result()

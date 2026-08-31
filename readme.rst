@@ -2,6 +2,13 @@
 Nerd Dictation
 ##############
 
+.. note::
+
+   This is a **fork** (`finalish0/nerd-dictation`).
+   Working patches live on branch ``local`` — see ``FORK.md`` and
+   ``CHANGELOG.fork.md``.
+   Upstream: https://github.com/ideasman42/nerd-dictation
+
 *Offline Speech to Text for Desktop Linux.* - See `demo video <https://www.youtube.com/watch?v=T7sR-4DFhpQ>`__.
 
 This is a utility that provides simple access speech to text for using in Linux
