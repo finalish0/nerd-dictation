@@ -23,7 +23,17 @@ def wav_duration_sec(path: str) -> float:
 
 
 def audio_ctx_for(duration_sec: float) -> int:
-    """Map clip length to whisper.cpp encoder frames (50 / s) plus pad."""
+    """Map clip length to whisper.cpp encoder frames (50 / s) plus pad.
+
+    Return 0 to keep the model default (1500 / ~30 s). Tight windows are
+    fast on short phrases and invent text on longer ones.
+    """
+    try:
+        max_sec = float(os.environ.get("NERD_DICTATION_WHISPER_CTX_MAX_SEC", "4.5"))
+    except ValueError:
+        max_sec = 4.5
+    if duration_sec >= max_sec:
+        return 0
     try:
         pad = int(os.environ.get("NERD_DICTATION_WHISPER_CTX_PAD", "32"))
     except ValueError:
@@ -80,7 +90,8 @@ def main() -> int:
                 try:
                     dur = wav_duration_sec(path)
                     ctx = audio_ctx_for(dur)
-                    kwargs["audio_ctx"] = ctx
+                    if ctx:
+                        kwargs["audio_ctx"] = ctx
                 except Exception as ex:
                     sys.stderr.write("whisper-rescore: wav meta %r\n" % (ex,))
             t0 = time.perf_counter()
