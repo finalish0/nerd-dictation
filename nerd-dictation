@@ -261,6 +261,51 @@ def simulate_typing_with_dotool(delete_prev_chars: int, text: str, cmd: str = "d
 #
 active_wtype_proc: "Optional[subprocess.Popen]" = None
 wtype_fail_ignored = False
+_focused_app_cache: Tuple[str, float] = ("", 0.0)
+
+
+def wtype_app_is_browser(app_id: str) -> bool:
+    a = (app_id or "").casefold()
+    return any(s in a for s in ("chrome", "chromium", "brave", "firefox", "vivaldi"))
+
+
+def sway_focused_app_id() -> str:
+    """Focused Sway app_id, or empty if unknown. Cached briefly."""
+    global _focused_app_cache
+    now = time.time()
+    cached, ts = _focused_app_cache
+    if now - ts < 0.4 and cached:
+        return cached
+    app = ""
+    try:
+        import json as _json
+
+        tree = _json.loads(
+            subprocess.check_output(["swaymsg", "-t", "get_tree"], timeout=0.2)
+        )
+
+        def find(node: dict) -> Optional[str]:
+            if node.get("focused"):
+                return str(node.get("app_id") or "")
+            for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []):
+                hit = find(child)
+                if hit is not None:
+                    return hit
+            return None
+
+        app = find(tree) or ""
+    except Exception:
+        app = ""
+    _focused_app_cache = (app, now)
+    return app
+
+
+def wtype_bulk_fast_ok() -> bool:
+    """Fast whole-line replace only outside browsers (Chrome drops keys)."""
+    app = sway_focused_app_id()
+    if not app or wtype_app_is_browser(app):
+        return False
+    return True
 
 
 def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
@@ -275,7 +320,7 @@ def build_wtype_args(delete_prev_chars: int, text: str) -> List[str]:
     The remaining text is a single ``--`` argument so internal spaces stay
     intact and a leading ``-`` is not parsed as a flag.
     """
-    bulk = delete_prev_chars >= 8
+    bulk = delete_prev_chars >= 8 and wtype_bulk_fast_ok()
     args: List[str] = [
         "wtype",
         "-d",

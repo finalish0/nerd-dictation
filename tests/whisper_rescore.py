@@ -6,6 +6,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 import wave
 from types import ModuleType
@@ -97,9 +98,18 @@ class TestWtypeArgs(unittest.TestCase):
         self.assertEqual(args[2], "8")
 
     def test_bulk_backspaces_are_faster(self) -> None:
+        nd._focused_app_cache = ("Alacritty", time.time())
         args = nd.build_wtype_args(40, "Jetzt hat es funktioniert. ")
         self.assertEqual(args[2], "3")
         self.assertGreaterEqual(args.count("backSpace"), 40)
+
+    def test_browser_keeps_slow_wtype(self) -> None:
+        self.assertTrue(nd.wtype_app_is_browser("brave-browser"))
+        self.assertTrue(nd.wtype_app_is_browser("google-chrome"))
+        self.assertFalse(nd.wtype_app_is_browser("Alacritty"))
+        nd._focused_app_cache = ("brave-browser", time.time())
+        args = nd.build_wtype_args(40, "Jetzt hat es funktioniert. ")
+        self.assertEqual(args[2], "8")
 
 
 class TestWriteWav(unittest.TestCase):
