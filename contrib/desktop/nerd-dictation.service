@@ -2,7 +2,7 @@
 Description=nerd-dictation warm daemon (model preloaded, suspended, mic closed)
 
 [Service]
-ExecStart=%h/git/nerd-dictation/.venv/bin/python %h/git/nerd-dictation/nerd-dictation begin --vosk-model-dir=%h/.local/share/vosk-models/vosk-model-de-0.21 --simulate-input-tool=WTYPE --input=PAREC --sample-rate=16000 --continuous --suspend-on-start
+ExecStart=%h/git/nerd-dictation/.venv/bin/python %h/git/nerd-dictation/nerd-dictation begin --vosk-model-dir=%h/.local/share/vosk-models/vosk-model-de-0.21 --vosk-en-model-dir=%h/.local/share/vosk-models/vosk-model-small-en-us-0.15 --simulate-input-tool=WTYPE --input=PAREC --sample-rate=16000 --continuous --suspend-on-start
 Restart=on-failure
 RestartSec=2
 

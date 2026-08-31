@@ -63,7 +63,13 @@ upload, so you get `icherzähleeinekleinegeschichte`.
 Reproduced with eSpeak → virtual Pulse sink (audio leak) and with a
 React textarea in a real Chrome tab (spaces).
 
-### 3. wtype robustness on Sway
+### 3. Two recognizers for mixed German/English
+
+`--vosk-en-model-dir` loads a second (usually small English) model on the
+same audio. German stays the default; English wins a word only with high
+confidence so `commit` is not heard as `komme mit`.
+
+### 4. wtype robustness on Sway
 
 - Run wtype via `Popen` so suspend can kill an in-flight type.
 - Ignore a killed wtype’s non-zero exit during freeze.

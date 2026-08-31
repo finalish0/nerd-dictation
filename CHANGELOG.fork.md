@@ -5,6 +5,15 @@ Script diff: **+241 / −36** lines in `nerd-dictation`.
 
 ## 2026-08-31
 
+### Dual models (German + English)
+
+Optional second VOSK model (`--vosk-en-model-dir`, small `en-us` by default).
+The same audio is decoded twice. High-confidence English words can replace
+weak German guesses (`commit` instead of `komme mit`). Short German
+function words stay German. Extra RAM is modest (small EN ~40 MB on disk).
+
+## 2026-08-31
+
 ### Leftover fragment of the previous sentence on the next recording
 
 After stop/send, the submitted text was correct. Starting the mic again

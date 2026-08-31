@@ -970,6 +970,94 @@ def recording_proc_with_non_blocking_stdout(
     return ps, stdout
 
 
+# Short German function words the English model must not override.
+_DE_KEEP = frozenset(
+    """
+    ich du er sie es wir ihr man
+    der die das den dem des
+    ein eine einem einen einer eines
+    und oder aber denn weil dass als wenn
+    ist sind war waren hat haben
+    nicht nur noch auch mal so ja nein
+    mit auf für von zu im in am an um
+    wie was wer wo wann
+    """.split()
+)
+
+
+def _looks_english_word(word: str) -> bool:
+    w = word.strip().lower()
+    if len(w) < 4 or w in _DE_KEEP:
+        return False
+    if any(ch in w for ch in "äöüß"):
+        return False
+    return all(("a" <= ch <= "z") or ch in "-'" for ch in w)
+
+
+def _vosk_words(json_data: dict, result_key: str, text_key: str) -> List[dict]:
+    words = json_data.get(result_key)
+    if isinstance(words, list) and words:
+        return [w for w in words if isinstance(w, dict) and w.get("word")]
+    text = json_data.get(text_key) or ""
+    return [{"word": t, "conf": 0.0, "start": 0.0, "end": 0.0} for t in text.split() if t]
+
+
+def merge_bilingual_text(
+    de_data: dict,
+    en_data: dict,
+    *,
+    en_min_conf: float,
+    en_margin: float,
+) -> str:
+    """Prefer German; splice in high-confidence English words on the same span."""
+    de_words = _vosk_words(de_data, "result", "text")
+    if "partial" in de_data and not de_data.get("result"):
+        de_words = _vosk_words(de_data, "partial_result", "partial")
+    en_words = _vosk_words(en_data, "result", "text")
+    if "partial" in en_data and not en_data.get("result"):
+        en_words = _vosk_words(en_data, "partial_result", "partial")
+    if not en_words:
+        return " ".join(str(w.get("word", "")) for w in de_words)
+
+    used = [False] * len(en_words)
+    out: List[str] = []
+    skip_until = -1.0
+    for dw in de_words:
+        d0 = float(dw.get("start") or 0.0)
+        if skip_until >= 0.0 and d0 < skip_until:
+            continue
+        d1 = float(dw.get("end") or 0.0)
+        de_c = float(dw.get("conf") or 0.0)
+        best_i = -1
+        best_c = -1.0
+        for i, ew in enumerate(en_words):
+            if used[i]:
+                continue
+            e0 = float(ew.get("start") or 0.0)
+            e1 = float(ew.get("end") or 0.0)
+            if d1 <= e0 or e1 <= d0:
+                continue
+            c = float(ew.get("conf") or 0.0)
+            if c > best_c:
+                best_c = c
+                best_i = i
+        if best_i >= 0:
+            en_w = str(en_words[best_i].get("word", ""))
+            de_w = str(dw.get("word", ""))
+            if (
+                _looks_english_word(en_w)
+                and best_c >= en_min_conf
+                and de_c < 0.88
+                and (best_c >= de_c + en_margin or not _looks_english_word(de_w))
+            ):
+                out.append(en_w)
+                used[best_i] = True
+                skip_until = float(en_words[best_i].get("end") or d1)
+                continue
+        out.append(str(dw.get("word", "")))
+    return " ".join(t for t in out if t)
+
+
 def text_from_vosk_pipe(
     *,
     vosk_model_dir: str,
@@ -986,6 +1074,7 @@ def text_from_vosk_pipe(
     suspend_on_start: bool = False,
     verbose: int = 0,
     vosk_grammar_file: str = "",
+    vosk_en_model_dir: str = "",
 ) -> bool:
     # Delay some imports until recording has started to avoid minor delays.
     import json
@@ -1021,11 +1110,42 @@ def text_from_vosk_pipe(
     if verbose >= 1:
         sys.stderr.write("Loading model...\n")
     model = vosk.Model(vosk_model_dir)
+    model_en = None
+    if vosk_en_model_dir:
+        if os.path.exists(vosk_en_model_dir):
+            if verbose >= 1:
+                sys.stderr.write("Loading English model...\n")
+            model_en = vosk.Model(vosk_en_model_dir)
+        else:
+            sys.stderr.write(
+                "[nd-debug] English model missing at {!r}, German only\n".format(vosk_en_model_dir)
+            )
 
-    if grammar_json == "":
-        rec = vosk.KaldiRecognizer(model, sample_rate)
-    else:
-        rec = vosk.KaldiRecognizer(model, sample_rate, grammar_json)
+    def _enable_words(recognizer: object) -> None:
+        recognizer.SetWords(True)  # type: ignore
+        try:
+            recognizer.SetPartialWords(True)  # type: ignore
+        except Exception:
+            pass
+
+    def _new_rec() -> object:
+        if grammar_json == "":
+            recognizer = vosk.KaldiRecognizer(model, sample_rate)
+        else:
+            recognizer = vosk.KaldiRecognizer(model, sample_rate, grammar_json)
+        _enable_words(recognizer)
+        return recognizer
+
+    def _new_rec_en() -> object:
+        if model_en is None:
+            return None
+        recognizer = vosk.KaldiRecognizer(model_en, sample_rate)
+        _enable_words(recognizer)
+        return recognizer
+
+    rec = _new_rec()
+    rec_en = _new_rec_en()
+    en_final_words: List[dict] = []
 
     if verbose >= 1:
         sys.stderr.write("Model loaded.\n")
@@ -1171,6 +1291,7 @@ def text_from_vosk_pipe(
     # Utilities for accessing results on `rec` (VOSK)
 
     def rec_handle_fn_wrapper_from_final_result() -> str:
+        nonlocal en_final_words
         json_text = rec.FinalResult()
 
         # When `rec.FinalResult()` returns an empty string, typically immediately after a resume,
@@ -1181,7 +1302,19 @@ def text_from_vosk_pipe(
 
         assert isinstance(json_text, str)
         json_data = json.loads(json_text)
-        text = json_data["text"]
+        if rec_en is not None:
+            en_part = {}
+            try:
+                en_part = json.loads(rec_en.PartialResult() or "{}")
+            except Exception:
+                en_part = {}
+            en_data = {
+                "result": list(en_final_words) + _vosk_words(en_part, "partial_result", "partial"),
+            }
+            en_final_words = []
+            text = merge_bilingual_text(json_data, en_data, en_min_conf=0.55, en_margin=0.08)
+        else:
+            text = json_data["text"]
         assert isinstance(text, str)
         if text:
             handle_fn_wrapper(text, False)
@@ -1195,7 +1328,22 @@ def text_from_vosk_pipe(
 
             json_data = json.loads(json_text)
             # In rare cases this can be unset (when resuming from being suspended).
-            text = json_data.get("partial", "")
+            if rec_en is not None:
+                en_part = {}
+                try:
+                    en_part = json.loads(rec_en.PartialResult() or "{}")
+                except Exception:
+                    en_part = {}
+                en_data = {
+                    "partial": en_part.get("partial", ""),
+                    "partial_result": list(en_final_words)
+                    + _vosk_words(en_part, "partial_result", "partial"),
+                }
+                text = merge_bilingual_text(
+                    json_data, en_data, en_min_conf=0.70, en_margin=0.12
+                )
+            else:
+                text = json_data.get("partial", "")
             if text:
                 handle_fn_wrapper(text, True)
         return json_text, json_text_partial_prev
@@ -1299,7 +1447,7 @@ def text_from_vosk_pipe(
     # can cause reentrant runtime errors and other related bugs.
     def do_suspend_resume() -> None:
         nonlocal has_ps, ps, stdout
-        nonlocal rec, capture_epoch, loop_epoch
+        nonlocal rec, rec_en, en_final_words, capture_epoch, loop_epoch
         global wtype_fail_ignored
         wtype_fail_ignored = False
 
@@ -1307,10 +1455,9 @@ def text_from_vosk_pipe(
 
         # Fresh recognizer + epoch so nothing from the paused session can emit.
         capture_epoch += 1
-        if grammar_json == "":
-            rec = vosk.KaldiRecognizer(model, sample_rate)
-        else:
-            rec = vosk.KaldiRecognizer(model, sample_rate, grammar_json)
+        rec = _new_rec()
+        rec_en = _new_rec_en()
+        en_final_words = []
         handle_fn_suspended()
 
         sys.stderr.write("[nd-debug] suspend_resume epoch=%d\n" % capture_epoch)
@@ -1429,6 +1576,14 @@ def text_from_vosk_pipe(
 
         if data:
             ok = rec.AcceptWaveform(data)
+            if rec_en is not None:
+                ok_en = rec_en.AcceptWaveform(data)
+                if ok_en:
+                    try:
+                        en_done = json.loads(rec_en.FinalResult() or "{}")
+                    except Exception:
+                        en_done = {}
+                    en_final_words.extend(_vosk_words(en_done, "result", "text"))
             if suspend or capture_epoch != loop_epoch:
                 continue
             if ok:
@@ -1495,6 +1650,7 @@ def main_begin(
     suspend_on_start: bool = False,
     verbose: int = 0,
     vosk_grammar_file: str = "",
+    vosk_en_model_dir: str = "",
 ) -> None:
     """
     Initialize audio recording, then full text to speech conversion can take place.
@@ -1662,6 +1818,7 @@ def main_begin(
         suspend_on_start=suspend_on_start,
         verbose=verbose,
         vosk_grammar_file=vosk_grammar_file,
+        vosk_en_model_dir=vosk_en_model_dir,
     )
 
     if not found_any:
@@ -1773,6 +1930,20 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
         type=str,
         metavar="DIR",
         help=("Path to the VOSK model, see: https://alphacephei.com/vosk/models"),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--vosk-en-model-dir",
+        default="",
+        dest="vosk_en_model_dir",
+        type=str,
+        metavar="DIR",
+        help=(
+            "Optional second VOSK model (typically English). The same audio is\n"
+            "decoded with both models; high-confidence English words can replace\n"
+            "weak German guesses so mixed DE/EN dictation works better."
+        ),
         required=False,
     )
 
@@ -2069,6 +2240,7 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             suspend_on_start=args.suspend_on_start,
             verbose=args.verbose,
             vosk_grammar_file=args.vosk_grammar_file,
+            vosk_en_model_dir=args.vosk_en_model_dir,
         ),
     )
 
