@@ -29,9 +29,9 @@ nerd-dictation-toggle master  # flip on/off (Sway Super+n)
 nerd-dictation-toggle status
 ```
 
-`off` points Ctrl+Space at `grok-voice-led` (Grok Voice plus pad breathing).
-`on` puts the nerd-dictation mic bind back. Super+n lives in the main Sway
-config so it still works when dictation is off.
+`off` writes an empty `~/.config/sway/nerd-dictation.conf` and `unbindsym Ctrl+Space`,
+so the combo is not swallowed. `on` puts the bind back. Super+n lives in the main
+Sway config so it still works when dictation is off.
 
 The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
 it calls `nerd-dictation-toggle suspend` first, then Enter into the focused
