@@ -1752,12 +1752,10 @@ def text_from_vosk_pipe(
 
         # Discard any un-finalized audio instead of flushing it as text.
         # (Local patch: stale remainder must not leak into the next dictation.)
-        # (Local patch) Kill an in-flight typing subprocess so nothing is
-        # typed after the suspend lands; its failure exit is ignored.
+        # Do not kill an in-flight wtype: Whisper replace is many Backspaces
+        # then the new sentence. SIGKILL there drops the first letters of the
+        # message being sent. The child can finish while we freeze.
         wtype_fail_ignored = True
-        kill_proc = active_wtype_proc
-        if kill_proc is not None and kill_proc.poll() is None:
-            kill_proc.kill()
 
         # Clear the buffer:
         handle_fn_suspended()

@@ -5,6 +5,15 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Do not kill wtype on send
+
+Freezing the mic used to SIGKILL the current `wtype`. If that was a
+Whisper replace, the line had already been backspaced and the first
+letters of the new text never arrived. The pad checkmark now waits
+~180 ms after suspend before Enter.
+
+## 2026-08-31
+
 ### Live VOSK uses the small German model
 
 `--vosk-model-dir` is `vosk-model-small-de-0.15` (~90 MB). The large
