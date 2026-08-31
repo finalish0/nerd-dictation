@@ -5,6 +5,15 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Optional Whisper `audio_ctx` from clip length
+
+`NERD_DICTATION_WHISPER_AUDIO_CTX=auto` sets the encoder window from
+the WAV duration (~50 frames/s + pad). Short phrases can infer in
+~0.5 s instead of ~3 s; quality can drift. Off unless the env is set.
+The worker logs `whisper-rescore: 0.51s audio=4.25s ctx=244`.
+
+## 2026-08-31
+
 ### Do not kill wtype on send
 
 Freezing the mic used to SIGKILL the current `wtype`. If that was a
