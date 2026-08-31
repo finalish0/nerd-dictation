@@ -1,7 +1,20 @@
 # Changelog (fork branch `local`)
 
 Base: upstream `ideasman42/nerd-dictation` @ `41f3727` (2025-10-10).
-Script diff: **+241 / −36** lines in `nerd-dictation`.
+Script diff: see `git diff main --stat -- nerd-dictation`.
+
+## 2026-08-31
+
+### Whisper phrase post-correction (live VOSK stays)
+
+VOSK still types word-by-word. After a phrase is finalized, a persistent
+`whisper-rescore-worker.py` (pywhispercpp, `ggml-small.bin`) re-decodes
+that audio and, if the user has not started the next phrase, replaces
+the last committed text. Empty/hallucinated Whisper output is dropped.
+Suspend/resume bumps `capture_epoch` so a late result cannot type into
+the next prompt. The worker stays loaded across freeze (SIGSTOP is only
+the main PID). Disable with `--no-whisper` or
+`NERD_DICTATION_WHISPER_MODEL` pointing at a missing path.
 
 ## 2026-08-31
 

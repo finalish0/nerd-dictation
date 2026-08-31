@@ -27,9 +27,10 @@ git merge main   # then resolve if needed
 
 ## What we actually changed
 
-Only the script `nerd-dictation` is patched (+241 / −36 vs upstream
-`41f3727`). Machine-specific glue (systemd user unit, AhaKey toggle,
-OpenCode/Grok send-to-suspend) is **not** in this repository.
+The script `nerd-dictation` is patched (Wayland/wtype, dual VOSK, Whisper
+rescore). Machine-specific glue (systemd user unit, AhaKey toggle,
+OpenCode/Grok send-to-suspend, Whisper worker) lives under
+`contrib/desktop/` on **`local` only**.
 
 Details and dates: [CHANGELOG.fork.md](CHANGELOG.fork.md).
 
@@ -69,7 +70,15 @@ React textarea in a real Chrome tab (spaces).
 same audio. German stays the default; English wins a word only with high
 confidence so `commit` is not heard as `komme mit`.
 
-### 4. wtype robustness on Sway
+### 4. Whisper as phrase post-correction (not live)
+
+`--whisper-model` starts a persistent Whisper worker. Live typing stays
+VOSK (word-for-word). Whisper only rewrites a *finished* phrase, and only
+while the next one has not started (`text_prev` empty, same
+`capture_epoch`). This is how mixed English in a German session can be
+fixed without losing the live visualization.
+
+### 5. wtype robustness on Sway
 
 - Run wtype via `Popen` so suspend can kill an in-flight type.
 - Ignore a killed wtype’s non-zero exit during freeze.

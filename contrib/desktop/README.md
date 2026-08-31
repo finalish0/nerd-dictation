@@ -57,10 +57,22 @@ Copy `grok-hooks-ahakey-led.json` to `~/.grok/hooks/ahakey-led.json`. New sessio
 
 ## Files
 
+The venv at `$HOME/git/nerd-dictation/.venv` needs `vosk` and
+`pywhispercpp`. Whisper post-correction uses
+`~/.cache/opencode-voice/models/ggml-small.bin` (or
+`NERD_DICTATION_WHISPER_MODEL`). `--no-whisper` turns it off. VOSK remains
+the live word-by-word engine; Whisper only rewrites a finished phrase if
+you have not started the next one. The unit sets
+`NERD_DICTATION_WHISPER_LANG=de` so German stays German; mixed English
+still gets a second look.
+
+## Files
+
 | File | Role |
 |---|---|
-| `nerd-dictation.service` | Warm daemon: model preloaded, `--suspend-on-start`, mic closed |
+| `nerd-dictation.service` | Warm daemon: VOSK models + Whisper worker, `--suspend-on-start` |
 | `nerd-dictation-toggle` | Toggle / `suspend` / `stop`; writes `$XDG_RUNTIME_DIR/nerd-dictation.pid` |
 | `sway-nerd-dictation.conf` | `Ctrl+Space` → toggle |
 | `opencode-ahakey-led.js` | OpenCode plugin: LED + freeze on send |
 | `grok-hooks-ahakey-led.json` | Grok hooks: LED + freeze on submit |
+| `whisper-rescore-worker.py` | Persistent Whisper process (READY, then one line per WAV) |

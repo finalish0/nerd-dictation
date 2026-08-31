@@ -1058,6 +1058,49 @@ def merge_bilingual_text(
     return " ".join(t for t in out if t)
 
 
+def write_s16le_wav(path: str, pcm: bytes, sample_rate: int) -> None:
+    import wave
+
+    with wave.open(path, "wb") as fh:
+        fh.setnchannels(1)
+        fh.setsampwidth(2)
+        fh.setframerate(sample_rate)
+        fh.writeframes(pcm)
+
+
+def whisper_text_is_junk(text: str) -> bool:
+    """True for empty output and common Whisper silence-hallucinations."""
+    t = " ".join((text or "").split()).strip(" \t.,!?;:\"'-").casefold()
+    if not t:
+        return True
+    if "amara.org" in t or t.startswith("untertitel"):
+        return True
+    if t.startswith("subtitles by"):
+        return True
+    if t in ("music", "[music]", "(music)", "♪"):
+        return True
+    if t.startswith("thanks for watching") or t.startswith("thank you for watching"):
+        return True
+    if t.startswith("thanks for listening"):
+        return True
+    return False
+
+
+def whisper_should_apply(vosk_text: str, whisper_text: str) -> bool:
+    """Replace the VOSK phrase only when Whisper looks like a real correction."""
+    w = " ".join((whisper_text or "").split()).strip()
+    v = " ".join((vosk_text or "").split()).strip()
+    if not w or whisper_text_is_junk(w):
+        return False
+    if w.casefold() == v.casefold():
+        return False
+    if v:
+        ratio = len(w) / float(max(len(v), 1))
+        if ratio < 0.35 or ratio > 2.8:
+            return False
+    return True
+
+
 def text_from_vosk_pipe(
     *,
     vosk_model_dir: str,
@@ -1075,6 +1118,8 @@ def text_from_vosk_pipe(
     verbose: int = 0,
     vosk_grammar_file: str = "",
     vosk_en_model_dir: str = "",
+    whisper_model: str = "",
+    whisper_threads: int = 4,
 ) -> bool:
     # Delay some imports until recording has started to avoid minor delays.
     import json
@@ -1099,6 +1144,46 @@ def text_from_vosk_pipe(
     import vosk  # type: ignore
 
     vosk.SetLogLevel(-1)
+
+    whisper_proc: "Optional[subprocess.Popen[bytes]]" = None
+    whisper_job: Optional[dict] = None
+    whisper_pending: Optional[dict] = None
+    whisper_out_buf = b""
+    whisper_stale = False
+    whisper_ready = False
+    whisper_need_submit = False
+    last_committed = ""
+    phrase_pcm = bytearray()
+
+    if whisper_model in ("-", "none", "off"):
+        whisper_model = ""
+    elif not whisper_model:
+        whisper_model = os.environ.get(
+            "NERD_DICTATION_WHISPER_MODEL",
+            os.path.expanduser("~/.cache/opencode-voice/models/ggml-small.bin"),
+        )
+    worker_py = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "contrib/desktop/whisper-rescore-worker.py",
+    )
+    if whisper_model and os.path.isfile(whisper_model) and os.path.isfile(worker_py):
+        try:
+            whisper_proc = subprocess.Popen(
+                [sys.executable, worker_py, whisper_model, str(max(1, whisper_threads))],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                start_new_session=True,
+            )
+            if whisper_proc.stdout is not None:
+                file_handle_make_non_blocking(whisper_proc.stdout)
+            sys.stderr.write(
+                "[nd-debug] whisper worker pid=%d model=%r\n" % (whisper_proc.pid, whisper_model)
+            )
+        except OSError as ex:
+            sys.stderr.write("[nd-debug] whisper worker spawn failed: %r\n" % (ex,))
+            whisper_proc = None
+    elif whisper_model:
+        sys.stderr.write("[nd-debug] whisper disabled (missing model or worker)\n")
 
     if not vosk_grammar_file:
         grammar_json = ""
@@ -1203,6 +1288,7 @@ def text_from_vosk_pipe(
         nonlocal json_text_partial_prev
         nonlocal pending_space
         nonlocal abort_assign
+        nonlocal phrase_pcm, last_committed, whisper_stale, whisper_pending, whisper_need_submit
 
         if in_emit:
             abort_assign = True
@@ -1211,6 +1297,11 @@ def text_from_vosk_pipe(
         text_prev = ""
         json_text_partial_prev = ""
         pending_space = False
+        phrase_pcm = bytearray()
+        last_committed = ""
+        whisper_stale = True
+        whisper_pending = None
+        whisper_need_submit = False
 
         if not (progressive and progressive_continuous):
             text_list.clear()
@@ -1221,6 +1312,7 @@ def text_from_vosk_pipe(
         nonlocal pending_space
         nonlocal in_emit
         nonlocal abort_assign
+        nonlocal last_committed, whisper_need_submit, whisper_stale
 
         # A suspend/resume raced with this recognition result.
         if capture_epoch != loop_epoch:
@@ -1281,9 +1373,14 @@ def text_from_vosk_pipe(
             if progressive_continuous:
                 if not emitted_final_diff and desired:
                     handle_fn(0, " ")
+                if desired:
+                    last_committed = desired
+                    whisper_need_submit = True
                 text_prev = ""
             else:
                 text_list.append(text)
+        elif text_prev and whisper_job is not None:
+            whisper_stale = True
 
         handled_any = True
 
@@ -1347,6 +1444,202 @@ def text_from_vosk_pipe(
             if text:
                 handle_fn_wrapper(text, True)
         return json_text, json_text_partial_prev
+
+    def _whisper_stop() -> None:
+        nonlocal whisper_proc
+        proc = whisper_proc
+        whisper_proc = None
+        if proc is None:
+            return
+        try:
+            if proc.stdin is not None:
+                proc.stdin.write(b"QUIT\n")
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=0.5)
+        except Exception:
+            pass
+
+    def _whisper_read_lines() -> List[str]:
+        nonlocal whisper_out_buf, whisper_proc
+        if whisper_proc is None or whisper_proc.stdout is None:
+            return []
+        try:
+            chunk = whisper_proc.stdout.read(65536)
+        except (BlockingIOError, ValueError, OSError):
+            return []
+        if chunk is None:
+            return []
+        if chunk == b"":
+            if whisper_proc.poll() is not None:
+                sys.stderr.write(
+                    "[nd-debug] whisper worker exited rc=%s\n" % (whisper_proc.returncode,)
+                )
+                whisper_proc = None
+            return []
+        whisper_out_buf += chunk
+        lines: List[str] = []
+        while True:
+            i = whisper_out_buf.find(b"\n")
+            if i < 0:
+                break
+            raw, whisper_out_buf = whisper_out_buf[:i], whisper_out_buf[i + 1 :]
+            lines.append(raw.decode("utf-8", "replace"))
+        return lines
+
+    def _whisper_send(job: dict) -> None:
+        nonlocal whisper_job, whisper_stale, whisper_proc
+        if whisper_proc is None or whisper_proc.stdin is None:
+            return
+        pcm = job.pop("pcm", b"")
+        wav = job.get("wav")
+        if not wav:
+            runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+            d = os.path.join(runtime, "nerd-dictation-whisper")
+            try:
+                os.makedirs(d, exist_ok=True)
+            except OSError as ex:
+                sys.stderr.write("[nd-debug] whisper tmpdir failed: %r\n" % (ex,))
+                return
+            fd, wav = tempfile.mkstemp(prefix="nd-", suffix=".wav", dir=d)
+            os.close(fd)
+            try:
+                write_s16le_wav(wav, pcm, sample_rate)
+            except Exception as ex:
+                sys.stderr.write("[nd-debug] whisper wav failed: %r\n" % (ex,))
+                try:
+                    os.remove(wav)
+                except OSError:
+                    pass
+                return
+            job["wav"] = wav
+        try:
+            whisper_proc.stdin.write((job["wav"] + "\n").encode("utf-8"))
+            whisper_proc.stdin.flush()
+        except Exception as ex:
+            sys.stderr.write("[nd-debug] whisper submit failed: %r\n" % (ex,))
+            try:
+                os.remove(job.get("wav", ""))
+            except OSError:
+                pass
+            return
+        whisper_job = job
+        whisper_stale = False
+        sys.stderr.write(
+            "[nd-debug] whisper submit epoch=%s vosk=%r\n" % (job.get("epoch"), job.get("vosk"))
+        )
+
+    def _whisper_submit(pcm: bytes, vosk_text: str, committed: str) -> None:
+        nonlocal whisper_job, whisper_pending, whisper_stale
+        if whisper_proc is None or whisper_proc.stdin is None:
+            return
+        min_bytes = max(2, int(sample_rate * 2 * 0.4))
+        if len(pcm) < min_bytes:
+            return
+        job = {
+            "pcm": pcm,
+            "vosk": vosk_text,
+            "committed": committed,
+            "epoch": capture_epoch,
+        }
+        if whisper_job is not None or not whisper_ready:
+            if whisper_job is not None:
+                whisper_stale = True
+            whisper_pending = job
+            return
+        _whisper_send(job)
+
+    def _whisper_emit_replace(committed: str, desired: str) -> None:
+        if not progressive or not progressive_continuous:
+            return
+        if text_prev or suspend or in_emit:
+            return
+        if capture_epoch != loop_epoch:
+            return
+        if not committed or committed == desired:
+            return
+        match = min(len(desired), len(committed))
+        for i in range(match):
+            if desired[i] != committed[i]:
+                match = i
+                break
+        out = desired[match:]
+        if match == len(committed) and match > 0:
+            match -= 1
+            out = desired[match:]
+        while match > 0 and (not out or out[0] in (" ", "\t", "\u00a0")):
+            match -= 1
+            out = desired[match:]
+        handle_fn(len(committed) - match, out)
+        sys.stderr.write("[nd-debug] whisper apply: %r -> %r\n" % (committed, desired))
+
+    def _whisper_poll() -> None:
+        nonlocal whisper_ready, whisper_job, whisper_pending, whisper_stale
+        nonlocal last_committed, whisper_proc
+        if whisper_proc is None:
+            return
+        if whisper_proc.poll() is not None:
+            sys.stderr.write(
+                "[nd-debug] whisper worker died rc=%s\n" % (whisper_proc.returncode,)
+            )
+            whisper_proc = None
+            whisper_job = None
+            return
+        for line in _whisper_read_lines():
+            if not whisper_ready:
+                if line.strip() == "READY":
+                    whisper_ready = True
+                    sys.stderr.write("[nd-debug] whisper worker ready\n")
+                    if whisper_pending is not None:
+                        nxt = whisper_pending
+                        whisper_pending = None
+                        if nxt.get("epoch") == capture_epoch and not suspend:
+                            _whisper_send(nxt)
+                continue
+            job = whisper_job
+            whisper_job = None
+            result = line.strip()
+            apply_ok = (
+                job is not None
+                and not whisper_stale
+                and job.get("epoch") == capture_epoch
+                and progressive
+                and progressive_continuous
+                and (not text_prev)
+                and (not suspend)
+                and capture_epoch == loop_epoch
+            )
+            processed = ""
+            if apply_ok:
+                w = " ".join(result.split()).strip()
+                processed = process_fn(w) if w else ""
+                apply_ok = bool(processed) and whisper_should_apply(job.get("vosk", ""), processed)
+            if apply_ok and job is not None:
+                desired = processed if processed.endswith(" ") else processed + " "
+                _whisper_emit_replace(job["committed"], desired)
+                last_committed = desired
+            else:
+                sys.stderr.write(
+                    "[nd-debug] whisper drop: stale=%s job_epoch=%s epoch=%s text_prev=%r result=%r\n"
+                    % (
+                        whisper_stale,
+                        job.get("epoch") if job else None,
+                        capture_epoch,
+                        text_prev,
+                        result,
+                    )
+                )
+            if whisper_pending is not None and whisper_ready and whisper_proc is not None:
+                nxt = whisper_pending
+                whisper_pending = None
+                if nxt.get("epoch") == capture_epoch and not suspend:
+                    _whisper_send(nxt)
 
     if not suspend_on_start:
         # Support setting up input simulation state.
@@ -1575,6 +1868,10 @@ def text_from_vosk_pipe(
             continue
 
         if data:
+            max_pcm = sample_rate * 2 * 30
+            phrase_pcm.extend(data)
+            if len(phrase_pcm) > max_pcm:
+                del phrase_pcm[: len(phrase_pcm) - max_pcm]
             ok = rec.AcceptWaveform(data)
             if rec_en is not None:
                 ok_en = rec_en.AcceptWaveform(data)
@@ -1589,6 +1886,13 @@ def text_from_vosk_pipe(
             if ok:
                 json_text_partial_prev = ""
                 json_text = rec_handle_fn_wrapper_from_final_result()
+                pcm_copy = bytes(phrase_pcm)
+                phrase_pcm.clear()
+                if whisper_need_submit and last_committed:
+                    whisper_need_submit = False
+                    _whisper_submit(pcm_copy, last_committed.strip(), last_committed)
+                else:
+                    whisper_need_submit = False
             else:
                 json_text, json_text_partial_prev = rec_handle_fn_wrapper_from_partial_result(json_text_partial_prev)
 
@@ -1602,6 +1906,8 @@ def text_from_vosk_pipe(
                     if code == 0:
                         code = 1  # The time was exceeded, exit!
 
+        _whisper_poll()
+
     # Close the recording process.
     if has_ps:
         # stdout.close(), no need, this is exiting.
@@ -1614,6 +1920,7 @@ def text_from_vosk_pipe(
 
     if code == -1:
         sys.stderr.write("Text input canceled!\n")
+        _whisper_stop()
         sys.exit(0)
 
     # This writes many JSON blocks, use the last one.
@@ -1623,6 +1930,7 @@ def text_from_vosk_pipe(
         # We never arrive here needing deletions
         handle_fn(0, process_fn(" ".join(text_list)))
 
+    _whisper_stop()
     return handled_any
 
 
@@ -1651,6 +1959,8 @@ def main_begin(
     verbose: int = 0,
     vosk_grammar_file: str = "",
     vosk_en_model_dir: str = "",
+    whisper_model: str = "",
+    whisper_threads: int = 4,
 ) -> None:
     """
     Initialize audio recording, then full text to speech conversion can take place.
@@ -1819,6 +2129,8 @@ def main_begin(
         verbose=verbose,
         vosk_grammar_file=vosk_grammar_file,
         vosk_en_model_dir=vosk_en_model_dir,
+        whisper_model=whisper_model,
+        whisper_threads=whisper_threads,
     )
 
     if not found_any:
@@ -1944,6 +2256,40 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             "decoded with both models; high-confidence English words can replace\n"
             "weak German guesses so mixed DE/EN dictation works better."
         ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--whisper-model",
+        default="",
+        dest="whisper_model",
+        type=str,
+        metavar="FILE",
+        help=(
+            "Optional ggml Whisper model for phrase post-correction.\n"
+            "VOSK still types word-by-word; Whisper only rewrites a finished phrase\n"
+            "if the next one has not started. Empty uses NERD_DICTATION_WHISPER_MODEL\n"
+            "or ~/.cache/opencode-voice/models/ggml-small.bin when that file exists."
+        ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--whisper-threads",
+        default=4,
+        dest="whisper_threads",
+        type=int,
+        metavar="N",
+        help="CPU threads for the Whisper rescore worker (default 4).",
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--no-whisper",
+        dest="no_whisper",
+        default=False,
+        action="store_true",
+        help="Disable Whisper phrase post-correction even if a model file exists.",
         required=False,
     )
 
@@ -2241,6 +2587,8 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             verbose=args.verbose,
             vosk_grammar_file=args.vosk_grammar_file,
             vosk_en_model_dir=args.vosk_en_model_dir,
+            whisper_model="-" if args.no_whisper else args.whisper_model,
+            whisper_threads=args.whisper_threads,
         ),
     )
 
