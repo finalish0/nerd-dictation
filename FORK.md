@@ -73,10 +73,9 @@ confidence so `commit` is not heard as `komme mit`.
 ### 4. Whisper as phrase post-correction (not live)
 
 `--whisper-model` starts a persistent Whisper worker. Live typing stays
-VOSK (word-for-word). Whisper only rewrites a *finished* phrase, and only
-while the next one has not started (`text_prev` empty, same
-`capture_epoch`). This is how mixed English in a German session can be
-fixed without losing the live visualization.
+VOSK (word-for-word). Each VOSK final is a fragment; Whisper rewrites
+that span even if the next fragment has already started. Silence and
+`[Pause]`/`[MUSIK]` tags are dropped.
 
 ### 5. wtype robustness on Sway
 

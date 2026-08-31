@@ -5,6 +5,17 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Whisper rescored per fragment, not the whole take
+
+Each VOSK final is one span. Whisper only rewrites that span and keeps
+whatever was typed after it, so a late correction is not dropped when
+you already started the next sentence. Room noise (`nein`/`nun` at
+low RMS) is not typed and not sent to Whisper. Bracket tags such as
+`[Pause]` / `[MUSIK]` / `[Pfiff]` are junk. Worker uses 8 threads and
+a higher no-speech threshold.
+
+## 2026-08-31
+
 ### Super+n master toggle
 
 Sway `Mod4+n` flips dictation on/off (`nerd-dictation-toggle master`), same

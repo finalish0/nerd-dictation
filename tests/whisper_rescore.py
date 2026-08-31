@@ -33,6 +33,9 @@ class TestWhisperJunk(unittest.TestCase):
         self.assertTrue(nd.whisper_text_is_junk("Thanks for watching."))
         self.assertTrue(nd.whisper_text_is_junk("Untertitel der Amara.org-Community"))
         self.assertTrue(nd.whisper_text_is_junk("[music]"))
+        self.assertTrue(nd.whisper_text_is_junk("[MUSIK]"))
+        self.assertTrue(nd.whisper_text_is_junk("[Pause]"))
+        self.assertTrue(nd.whisper_text_is_junk("[Pfiff]"))
 
     def test_real_phrases_are_kept(self) -> None:
         self.assertFalse(nd.whisper_text_is_junk("ich commit das"))
@@ -52,9 +55,30 @@ class TestWhisperShouldApply(unittest.TestCase):
         self.assertFalse(
             nd.whisper_should_apply("ich erzähle eine geschichte", "Thanks for watching.")
         )
+        self.assertFalse(nd.whisper_should_apply("nein", "[Pause]"))
+        self.assertFalse(nd.whisper_should_apply("nein", "[MUSIK]"))
 
     def test_length_mismatch_skipped(self) -> None:
         self.assertFalse(nd.whisper_should_apply("ich erzähle eine kleine geschichte über eine ente", "Hi"))
+
+
+class TestVoskNoise(unittest.TestCase):
+    def test_quiet_is_noise(self) -> None:
+        self.assertTrue(nd.vosk_phrase_is_noise("nein", 0.004, 0.6))
+        self.assertTrue(nd.vosk_phrase_is_noise("nun einen", 0.008, 0.8))
+
+    def test_spoken_nein_kept(self) -> None:
+        self.assertFalse(nd.vosk_phrase_is_noise("nein", 0.08, 0.5))
+
+    def test_real_sentence_kept(self) -> None:
+        self.assertFalse(
+            nd.vosk_phrase_is_noise(
+                "es hat gerade ziemlich gut funktioniert", 0.05, 2.4
+            )
+        )
+
+    def test_silence_pcm(self) -> None:
+        self.assertLess(nd.pcm_rms16(b"\x00\x00" * 800), 0.001)
 
 
 class TestWriteWav(unittest.TestCase):

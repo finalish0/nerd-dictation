@@ -1068,16 +1068,57 @@ def write_s16le_wav(path: str, pcm: bytes, sample_rate: int) -> None:
         fh.writeframes(pcm)
 
 
+_VOSK_FILLER = frozenset(
+    "nein ja nun äh ähm hm mhm m n un einen ein der die das und so mm".split()
+)
+
+
+def pcm_rms16(pcm: bytes) -> float:
+    """Peak-normalized RMS of s16le mono PCM, in 0..1."""
+    import array
+
+    n = len(pcm) // 2
+    if n <= 0:
+        return 0.0
+    samples = array.array("h")
+    samples.frombytes(pcm[: n * 2])
+    acc = 0.0
+    for s in samples:
+        acc += float(s) * float(s)
+    return (acc / float(n)) ** 0.5 / 32768.0
+
+
+def vosk_phrase_is_noise(
+    text: str, rms: float, duration_sec: float, min_rms: float = 0.012
+) -> bool:
+    """True for room noise / filler that should not be typed or rescored."""
+    words = [w for w in (text or "").split() if w]
+    if rms < min_rms:
+        return True
+    if duration_sec < 0.35:
+        return True
+    if (
+        len(words) <= 2
+        and duration_sec < 1.2
+        and rms < max(0.04, min_rms * 3.0)
+        and all(w.casefold().strip(".,!?") in _VOSK_FILLER for w in words)
+    ):
+        return True
+    return False
+
+
 def whisper_text_is_junk(text: str) -> bool:
     """True for empty output and common Whisper silence-hallucinations."""
     t = " ".join((text or "").split()).strip(" \t.,!?;:\"'-").casefold()
     if not t:
         return True
+    if (t.startswith("[") and t.endswith("]")) or (t.startswith("(") and t.endswith(")")):
+        return True
     if "amara.org" in t or t.startswith("untertitel"):
         return True
     if t.startswith("subtitles by"):
         return True
-    if t in ("music", "[music]", "(music)", "♪"):
+    if t in ("music", "pause", "pfiff", "geräusch", "lachen", "applaus", "♪"):
         return True
     if t.startswith("thanks for watching") or t.startswith("thank you for watching"):
         return True
@@ -1147,13 +1188,17 @@ def text_from_vosk_pipe(
 
     whisper_proc: "Optional[subprocess.Popen[bytes]]" = None
     whisper_job: Optional[dict] = None
-    whisper_pending: Optional[dict] = None
+    whisper_queue: List[dict] = []
     whisper_out_buf = b""
     whisper_stale = False
     whisper_ready = False
-    whisper_need_submit = False
-    last_committed = ""
+    whisper_submit_idx = -1
+    fragments: List[dict] = []
     phrase_pcm = bytearray()
+    try:
+        vad_rms = float(os.environ.get("NERD_DICTATION_VAD_RMS", "0.012"))
+    except ValueError:
+        vad_rms = 0.012
 
     if whisper_model in ("-", "none", "off"):
         whisper_model = ""
@@ -1288,7 +1333,7 @@ def text_from_vosk_pipe(
         nonlocal json_text_partial_prev
         nonlocal pending_space
         nonlocal abort_assign
-        nonlocal phrase_pcm, last_committed, whisper_stale, whisper_pending, whisper_need_submit
+        nonlocal phrase_pcm, fragments, whisper_stale, whisper_queue, whisper_submit_idx
 
         if in_emit:
             abort_assign = True
@@ -1298,10 +1343,10 @@ def text_from_vosk_pipe(
         json_text_partial_prev = ""
         pending_space = False
         phrase_pcm = bytearray()
-        last_committed = ""
+        fragments = []
         whisper_stale = True
-        whisper_pending = None
-        whisper_need_submit = False
+        whisper_queue = []
+        whisper_submit_idx = -1
 
         if not (progressive and progressive_continuous):
             text_list.clear()
@@ -1312,7 +1357,7 @@ def text_from_vosk_pipe(
         nonlocal pending_space
         nonlocal in_emit
         nonlocal abort_assign
-        nonlocal last_committed, whisper_need_submit, whisper_stale
+        nonlocal fragments, whisper_submit_idx
 
         # A suspend/resume raced with this recognition result.
         if capture_epoch != loop_epoch:
@@ -1324,6 +1369,16 @@ def text_from_vosk_pipe(
                 return
             text_list.append(text)
             handled_any = True
+            return
+
+        dur = len(phrase_pcm) / float(sample_rate * 2) if sample_rate else 0.0
+        rms = pcm_rms16(bytes(phrase_pcm)) if phrase_pcm else 0.0
+        if vosk_phrase_is_noise(text, rms, dur, vad_rms):
+            if (not is_partial_arg) and text_prev:
+                in_emit = True
+                handle_fn(len(text_prev), "")
+                in_emit = False
+                text_prev = ""
             return
 
         # Progressive support (type as you speak).
@@ -1374,13 +1429,13 @@ def text_from_vosk_pipe(
                 if not emitted_final_diff and desired:
                     handle_fn(0, " ")
                 if desired:
-                    last_committed = desired
-                    whisper_need_submit = True
+                    fragments.append(
+                        {"typed": desired, "vosk": text, "epoch": capture_epoch}
+                    )
+                    whisper_submit_idx = len(fragments) - 1
                 text_prev = ""
             else:
                 text_list.append(text)
-        elif text_prev and whisper_job is not None:
-            whisper_stale = True
 
         handled_any = True
 
@@ -1494,7 +1549,7 @@ def text_from_vosk_pipe(
         return lines
 
     def _whisper_send(job: dict) -> None:
-        nonlocal whisper_job, whisper_stale, whisper_proc
+        nonlocal whisper_job, whisper_proc
         if whisper_proc is None or whisper_proc.stdin is None:
             return
         pcm = job.pop("pcm", b"")
@@ -1530,58 +1585,63 @@ def text_from_vosk_pipe(
                 pass
             return
         whisper_job = job
-        whisper_stale = False
         sys.stderr.write(
-            "[nd-debug] whisper submit epoch=%s vosk=%r\n" % (job.get("epoch"), job.get("vosk"))
+            "[nd-debug] whisper submit epoch=%s idx=%s vosk=%r\n"
+            % (job.get("epoch"), job.get("idx"), job.get("vosk"))
         )
 
-    def _whisper_submit(pcm: bytes, vosk_text: str, committed: str) -> None:
-        nonlocal whisper_job, whisper_pending, whisper_stale
+    def _whisper_submit(pcm: bytes, vosk_text: str, committed: str, idx: int) -> None:
+        nonlocal whisper_job, whisper_queue
         if whisper_proc is None or whisper_proc.stdin is None:
             return
         min_bytes = max(2, int(sample_rate * 2 * 0.4))
         if len(pcm) < min_bytes:
+            return
+        dur = len(pcm) / float(sample_rate * 2)
+        if vosk_phrase_is_noise(vosk_text, pcm_rms16(pcm), dur, vad_rms):
+            sys.stderr.write("[nd-debug] whisper skip noise %r\n" % (vosk_text,))
             return
         job = {
             "pcm": pcm,
             "vosk": vosk_text,
             "committed": committed,
             "epoch": capture_epoch,
+            "idx": idx,
         }
         if whisper_job is not None or not whisper_ready:
-            if whisper_job is not None:
-                whisper_stale = True
-            whisper_pending = job
+            if len(whisper_queue) >= 3:
+                sys.stderr.write("[nd-debug] whisper queue full, drop %r\n" % (vosk_text,))
+                return
+            whisper_queue.append(job)
             return
         _whisper_send(job)
 
-    def _whisper_emit_replace(committed: str, desired: str) -> None:
+    def _whisper_emit_span(on_screen: str, desired: str) -> None:
         if not progressive or not progressive_continuous:
             return
-        if text_prev or suspend or in_emit:
+        if suspend or in_emit:
             return
         if capture_epoch != loop_epoch:
             return
-        if not committed or committed == desired:
+        if not on_screen or on_screen == desired:
             return
-        match = min(len(desired), len(committed))
+        match = min(len(desired), len(on_screen))
         for i in range(match):
-            if desired[i] != committed[i]:
+            if desired[i] != on_screen[i]:
                 match = i
                 break
         out = desired[match:]
-        if match == len(committed) and match > 0:
+        if match == len(on_screen) and match > 0:
             match -= 1
             out = desired[match:]
         while match > 0 and (not out or out[0] in (" ", "\t", "\u00a0")):
             match -= 1
             out = desired[match:]
-        handle_fn(len(committed) - match, out)
-        sys.stderr.write("[nd-debug] whisper apply: %r -> %r\n" % (committed, desired))
+        handle_fn(len(on_screen) - match, out)
 
     def _whisper_poll() -> None:
-        nonlocal whisper_ready, whisper_job, whisper_pending, whisper_stale
-        nonlocal last_committed, whisper_proc
+        nonlocal whisper_ready, whisper_job, whisper_queue, whisper_stale
+        nonlocal whisper_proc, fragments
         if whisper_proc is None:
             return
         if whisper_proc.poll() is not None:
@@ -1596,24 +1656,25 @@ def text_from_vosk_pipe(
                 if line.strip() == "READY":
                     whisper_ready = True
                     sys.stderr.write("[nd-debug] whisper worker ready\n")
-                    if whisper_pending is not None:
-                        nxt = whisper_pending
-                        whisper_pending = None
+                    if whisper_queue:
+                        nxt = whisper_queue.pop(0)
                         if nxt.get("epoch") == capture_epoch and not suspend:
                             _whisper_send(nxt)
                 continue
             job = whisper_job
             whisper_job = None
             result = line.strip()
+            idx = int(job.get("idx", -1)) if job else -1
             apply_ok = (
                 job is not None
                 and not whisper_stale
                 and job.get("epoch") == capture_epoch
                 and progressive
                 and progressive_continuous
-                and (not text_prev)
                 and (not suspend)
                 and capture_epoch == loop_epoch
+                and 0 <= idx < len(fragments)
+                and fragments[idx].get("epoch") == job.get("epoch")
             )
             processed = ""
             if apply_ok:
@@ -1621,23 +1682,31 @@ def text_from_vosk_pipe(
                 processed = process_fn(w) if w else ""
                 apply_ok = bool(processed) and whisper_should_apply(job.get("vosk", ""), processed)
             if apply_ok and job is not None:
-                desired = processed if processed.endswith(" ") else processed + " "
-                _whisper_emit_replace(job["committed"], desired)
-                last_committed = desired
+                new = processed if processed.endswith(" ") else processed + " "
+                old = str(fragments[idx].get("typed") or job.get("committed") or "")
+                fragments[idx]["typed"] = new
+                suffix = "".join(str(f.get("typed") or "") for f in fragments[idx + 1 :]) + (
+                    text_prev or ""
+                )
+                _whisper_emit_span(old + suffix, new + suffix)
+                sys.stderr.write(
+                    "[nd-debug] whisper apply idx=%d: %r -> %r suffix=%r\n"
+                    % (idx, old, new, suffix)
+                )
             else:
                 sys.stderr.write(
-                    "[nd-debug] whisper drop: stale=%s job_epoch=%s epoch=%s text_prev=%r result=%r\n"
+                    "[nd-debug] whisper drop: stale=%s idx=%s job_epoch=%s epoch=%s text_prev=%r result=%r\n"
                     % (
                         whisper_stale,
+                        idx,
                         job.get("epoch") if job else None,
                         capture_epoch,
                         text_prev,
                         result,
                     )
                 )
-            if whisper_pending is not None and whisper_ready and whisper_proc is not None:
-                nxt = whisper_pending
-                whisper_pending = None
+            if whisper_queue and whisper_ready and whisper_proc is not None:
+                nxt = whisper_queue.pop(0)
                 if nxt.get("epoch") == capture_epoch and not suspend:
                     _whisper_send(nxt)
 
@@ -1888,11 +1957,13 @@ def text_from_vosk_pipe(
                 json_text = rec_handle_fn_wrapper_from_final_result()
                 pcm_copy = bytes(phrase_pcm)
                 phrase_pcm.clear()
-                if whisper_need_submit and last_committed:
-                    whisper_need_submit = False
-                    _whisper_submit(pcm_copy, last_committed.strip(), last_committed)
+                if whisper_submit_idx >= 0 and whisper_submit_idx < len(fragments):
+                    frag = fragments[whisper_submit_idx]
+                    idx = whisper_submit_idx
+                    whisper_submit_idx = -1
+                    _whisper_submit(pcm_copy, str(frag.get("vosk") or ""), str(frag.get("typed") or ""), idx)
                 else:
-                    whisper_need_submit = False
+                    whisper_submit_idx = -1
             else:
                 json_text, json_text_partial_prev = rec_handle_fn_wrapper_from_partial_result(json_text_partial_prev)
 
