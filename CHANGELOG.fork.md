@@ -5,6 +5,15 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-08-31
 
+### Super+n master toggle
+
+Sway `Mod4+n` flips dictation on/off (`nerd-dictation-toggle master`), same
+idea as Super+m for the laptop panel. The bind stays in the main Sway
+config so it still works when the daemon is off. Ctrl+Space remains the
+mic and is unbound while off.
+
+## 2026-08-31
+
 ### Whisper phrase post-correction (live VOSK stays)
 
 VOSK still types word-by-word. After a phrase is finalized, a persistent

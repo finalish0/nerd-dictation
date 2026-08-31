@@ -38,12 +38,17 @@ unbind_mic() {
   swaymsg -q 'unbindsym Ctrl+Space' 2>>"$LOG" || true
 }
 
+notify() {
+  notify-send -u low "Diktation" "$1" 2>/dev/null || true
+}
+
 master_off() {
   date -Iseconds > "$FLAG"
   systemctl --user disable --now "$SERVICE" 2>>"$LOG" || true
   unbind_mic
   pulse off
   echo "nerd-dictation: off (Ctrl+Space goes to the app, e.g. Grok voice)"
+  notify "aus — Ctrl+Space ist frei"
 }
 
 master_on() {
@@ -52,6 +57,15 @@ master_on() {
   bind_mic
   pulse off
   echo "nerd-dictation: on (Ctrl+Space is the mic; wait ~10s for the model)"
+  notify "an — Ctrl+Space ist das Mic"
+}
+
+master_toggle() {
+  if [ -f "$FLAG" ]; then
+    master_on
+  else
+    master_off
+  fi
 }
 
 case "${1:-}" in
@@ -61,6 +75,10 @@ case "${1:-}" in
     ;;
   on|enable)
     master_on
+    exit 0
+    ;;
+  master|toggle)
+    master_toggle
     exit 0
     ;;
   status)

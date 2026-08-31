@@ -24,11 +24,13 @@ Master switch (one command; do not edit Sway by hand after the include is in pla
 ```sh
 nerd-dictation-toggle off     # stop daemon, unbind Ctrl+Space (Grok voice can use it)
 nerd-dictation-toggle on      # start daemon, bind Ctrl+Space as the mic
+nerd-dictation-toggle master  # flip on/off (Sway Super+n)
 nerd-dictation-toggle status
 ```
 
 `off` writes an empty `~/.config/sway/nerd-dictation.conf` and `unbindsym Ctrl+Space`,
-so the combo is not swallowed. `on` puts the bind back.
+so the combo is not swallowed. `on` puts the bind back. Super+n lives in the main
+Sway config so it still works when dictation is off.
 
 The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
 it calls `nerd-dictation-toggle suspend` first, then send/focus.
@@ -43,9 +45,11 @@ Then in `~/.config/sway/config` (once):
 
 ```
 include ~/.config/sway/nerd-dictation.conf
+bindsym $mod+n exec --no-startup-id ~/.local/bin/nerd-dictation-toggle master
 ```
 
-That file is rewritten by `on`/`off`. Reload once after adding the include.
+The include file is rewritten by `on`/`off` (Ctrl+Space only). Super+n stays in
+the main config. Reload once after adding the include.
 
 ## OpenCode
 
