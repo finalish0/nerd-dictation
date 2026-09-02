@@ -43,6 +43,36 @@ class TestWhisperJunk(unittest.TestCase):
         self.assertFalse(nd.whisper_text_is_junk("ich erzähle eine kleine geschichte"))
 
 
+class TestCollapseRepeatedWhisper(unittest.TestCase):
+    def test_identical_sentences(self) -> None:
+        s = (
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden. "
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden."
+        )
+        self.assertEqual(
+            nd.collapse_repeated_whisper(s),
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden.",
+        )
+
+    def test_second_copy_drops_opener(self) -> None:
+        s = (
+            "Entschuldigung, du hast mich nicht richtig verstanden und auch den Fall schlug gemacht worden. "
+            "Du hast mich nicht richtig verstanden und auch den Fall schlug gemacht worden."
+        )
+        self.assertEqual(
+            nd.collapse_repeated_whisper(s),
+            "Entschuldigung, du hast mich nicht richtig verstanden und auch den Fall schlug gemacht worden.",
+        )
+
+    def test_two_different_sentences_kept(self) -> None:
+        s = "Ich habe das Problem gehabt. Schau doch wie der Text aussieht."
+        self.assertEqual(nd.collapse_repeated_whisper(s), s)
+
+    def test_idempotent(self) -> None:
+        s = "Schau doch wie man Text hier in der Nachricht aussieht."
+        self.assertEqual(nd.collapse_repeated_whisper(s), s)
+
+
 class TestWhisperShouldApply(unittest.TestCase):
     def test_identical_skipped(self) -> None:
         self.assertFalse(nd.whisper_should_apply("ich commit das", "ich commit das"))
@@ -60,6 +90,47 @@ class TestWhisperShouldApply(unittest.TestCase):
 
     def test_length_mismatch_skipped(self) -> None:
         self.assertFalse(nd.whisper_should_apply("ich erzähle eine kleine geschichte über eine ente", "Hi"))
+
+    def test_echoed_sentence_collapses_then_can_apply(self) -> None:
+        vosk = (
+            "beim raus löschen des ersten satzes have mit krieg diktatur "
+            "gemacht worden ist der erste buchstabe übrig geblieben ist"
+        )
+        echoed = (
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden. "
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden."
+        )
+        collapsed = nd.collapse_repeated_whisper(echoed)
+        self.assertNotIn("worden. Beim", collapsed)
+        self.assertTrue(nd.whisper_should_apply(vosk, collapsed))
+
+
+class TestAudioCtx(unittest.TestCase):
+    def test_long_clip_is_sized_not_zero(self) -> None:
+        worker = execfile_as_module(
+            "whisper_rescore_worker_test",
+            os.path.join(os.path.dirname(HERE), "contrib/desktop/whisper-rescore-worker.py"),
+        )
+        ctx = worker.audio_ctx_for(7.72)
+        self.assertGreaterEqual(ctx, 32)
+        self.assertEqual(ctx, int(7.72 * 50.0 + 32))
+        self.assertLessEqual(ctx, 1500)
+
+    def test_collapse_segments(self) -> None:
+        worker = execfile_as_module(
+            "whisper_rescore_worker_test2",
+            os.path.join(os.path.dirname(HERE), "contrib/desktop/whisper-rescore-worker.py"),
+        )
+        text = worker.collapse_repeated_segments(
+            [
+                "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden.",
+                "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden.",
+            ]
+        )
+        self.assertEqual(
+            text,
+            "Beim Rauslöschen des ersten Satzes wurde es mit Krieg Diktatur gemacht worden.",
+        )
 
 
 class TestVoskNoise(unittest.TestCase):

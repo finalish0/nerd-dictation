@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 import wave
@@ -25,21 +26,46 @@ def wav_duration_sec(path: str) -> float:
 def audio_ctx_for(duration_sec: float) -> int:
     """Map clip length to whisper.cpp encoder frames (50 / s) plus pad.
 
-    Return 0 to keep the model default (1500 / ~30 s). Tight windows are
-    fast on short phrases and invent text on longer ones.
+    Always size the window to the clip. The old path returned 0 (model
+    default ~30 s) once duration hit NERD_DICTATION_WHISPER_CTX_MAX_SEC;
+    that padded ~7 s phrases with silence and Whisper echoed the sentence.
     """
-    try:
-        max_sec = float(os.environ.get("NERD_DICTATION_WHISPER_CTX_MAX_SEC", "4.5"))
-    except ValueError:
-        max_sec = 4.5
-    if duration_sec >= max_sec:
-        return 0
     try:
         pad = int(os.environ.get("NERD_DICTATION_WHISPER_CTX_PAD", "32"))
     except ValueError:
         pad = 32
-    ctx = int(duration_sec * 50.0 + max(0, pad))
+    ctx = int(max(0.0, duration_sec) * 50.0 + max(0, pad))
     return max(32, min(1500, ctx))
+
+
+def _norm_seg(text: str) -> str:
+    return " ".join((text or "").casefold().strip(" .!?,;:").split())
+
+
+def collapse_repeated_segments(texts: list[str]) -> str:
+    """Join segments, dropping a trailing echo of the same sentence."""
+    parts = [" ".join((t or "").split()).strip() for t in texts]
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    out: list[str] = []
+    for p in parts:
+        if out:
+            a, b = _norm_seg(out[-1]), _norm_seg(p)
+            if a and b and (a == b or (len(b) >= 24 and (b in a or a in b))):
+                if len(b) > len(a):
+                    out[-1] = p
+                continue
+        out.append(p)
+    text = " ".join(out)
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if len(sents) >= 2 and len(sents) % 2 == 0:
+        mid = len(sents) // 2
+        left, right = " ".join(sents[:mid]), " ".join(sents[mid:])
+        a, b = _norm_seg(left), _norm_seg(right)
+        if a and b and (a == b or (len(a) >= 24 and len(b) >= 24 and (a in b or b in a))):
+            return left if len(a) >= len(b) else right
+    return text
 
 
 def want_audio_ctx() -> bool:
@@ -107,7 +133,8 @@ def main() -> int:
                 else:
                     raise
             dt = time.perf_counter() - t0
-            text = " ".join((getattr(s, "text", "") or "").strip() for s in segs)
+            segs_text = [(getattr(s, "text", "") or "").strip() for s in segs]
+            text = collapse_repeated_segments(segs_text)
             text = " ".join(text.split())
             sys.stderr.write(
                 "whisper-rescore: %.2fs audio=%.2fs ctx=%d %r\n" % (dt, dur, ctx, text[:80])

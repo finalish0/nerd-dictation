@@ -13,7 +13,17 @@ FLAG="$FLAGDIR/disabled"
 PIDFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/nerd-dictation.pid"
 SWAYBIND="${SWAYBIND:-$HOME/.config/sway/nerd-dictation.conf}"
 TOGGLE_BIN="${TOGGLE_BIN:-$HOME/.local/bin/nerd-dictation-toggle}"
+PAD_ENTER="${PAD_ENTER:-$HOME/git/ahakey-x1/contrib/pad-enter.sh}"
+AHAKEY_ENV="${AHAKEY_ENV:-$HOME/git/ahakey-x1/.env}"
+PAD_DEVICE="${AHAKEY_SWAY_DEVICE:-}"
+if [ -z "$PAD_DEVICE" ] && [ -f "$AHAKEY_ENV" ]; then
+  PAD_DEVICE=$(awk -F= '/^AHAKEY_SWAY_DEVICE=/{print $2; exit}' "$AHAKEY_ENV")
+fi
 BIND_CMD="bindsym Ctrl+Space exec --no-startup-id $TOGGLE_BIN"
+PAD_ENTER_CMD=""
+if [ -n "$PAD_DEVICE" ] && [ -x "$PAD_ENTER" ]; then
+  PAD_ENTER_CMD="bindsym --input-device=$PAD_DEVICE --no-repeat Return exec --no-startup-id $PAD_ENTER"
+fi
 
 mkdir -p "$(dirname "$LOG")" "$FLAGDIR" "$(dirname "$SWAYBIND")"
 
@@ -26,16 +36,26 @@ pulse() {
 mainpid() { systemctl --user show "$SERVICE" -p MainPID --value 2>/dev/null; }
 
 bind_mic() {
-  printf '%s\n' \
-    '# Written by nerd-dictation-toggle on/off. Do not edit by hand.' \
-    "$BIND_CMD" > "$SWAYBIND"
+  {
+    echo '# Written by nerd-dictation-toggle on/off. Do not edit by hand.'
+    echo "$BIND_CMD"
+    if [ -n "$PAD_ENTER_CMD" ]; then
+      echo "$PAD_ENTER_CMD"
+    fi
+  } > "$SWAYBIND"
   swaymsg -q "$BIND_CMD" 2>>"$LOG" || true
+  if [ -n "$PAD_ENTER_CMD" ]; then
+    swaymsg -q "$PAD_ENTER_CMD" 2>>"$LOG" || true
+  fi
 }
 
 unbind_mic() {
   printf '%s\n' \
-    '# nerd-dictation master off — Ctrl+Space is free for Grok voice etc.' > "$SWAYBIND"
+    '# nerd-dictation master off — Ctrl+Space and pad Enter go to the app.' > "$SWAYBIND"
   swaymsg -q 'unbindsym Ctrl+Space' 2>>"$LOG" || true
+  if [ -n "$PAD_DEVICE" ]; then
+    swaymsg -q "unbindsym --input-device=$PAD_DEVICE Return" 2>>"$LOG" || true
+  fi
 }
 
 notify() {

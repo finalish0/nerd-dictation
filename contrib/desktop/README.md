@@ -33,9 +33,11 @@ nerd-dictation-toggle status
 so the combo is not swallowed. `on` puts the bind back. Super+n lives in the main
 Sway config so it still works when dictation is off.
 
-The AhaKey **checkmark** (Enter) is wired in ahakey-x1 `contrib/pad-enter.sh`:
-it calls `nerd-dictation-toggle suspend` first, then Enter into the focused
-window. It does not jump to Grok/OpenCode.
+The AhaKey **checkmark** is HID Enter. While Super+n dictation is **on**,
+`nerd-dictation-toggle` binds *the pad device only* to ahakey-x1
+`contrib/pad-enter.sh` (wait for `wtype`, freeze mic, inject Enter) — any
+focused app. While dictation is **off**, pad Enter is native again (Croc
+Dictator / Grok Voice). Laptop Enter is never stolen.
 
 ## Sway
 

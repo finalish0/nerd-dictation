@@ -11,6 +11,7 @@ While it could use any system currently it uses the VOSK-API.
 # All built in modules.
 import argparse
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -1129,9 +1130,51 @@ def whisper_text_is_junk(text: str) -> bool:
     return False
 
 
+def _norm_whisper_phrase(text: str) -> str:
+    return " ".join((text or "").casefold().strip(" .!?,;:").split())
+
+
+def _collapse_similar_halves(left: List[str], right: List[str]) -> Optional[str]:
+    a = _norm_whisper_phrase(" ".join(left))
+    b = _norm_whisper_phrase(" ".join(right))
+    if not a or not b:
+        return None
+    if a == b:
+        return " ".join(left)
+    # Same sentence, second copy dropped the opener ("Entschuldigung, …").
+    if len(a) >= 24 and len(b) >= 24 and (a in b or b in a):
+        return " ".join(left if len(a) >= len(b) else right)
+    wa, wb = set(a.split()), set(b.split())
+    if min(len(wa), len(wb)) >= 6:
+        overlap = len(wa & wb) / float(max(len(wa), len(wb)))
+        if overlap >= 0.85:
+            return " ".join(left if len(a) >= len(b) else right)
+    return None
+
+
+def collapse_repeated_whisper(text: str) -> str:
+    """Drop a Whisper echo of the same sentence (padded 30s window hallucination)."""
+    w = " ".join((text or "").split()).strip()
+    if not w:
+        return w
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", w) if p.strip()]
+    if len(parts) >= 2 and len(parts) % 2 == 0:
+        mid = len(parts) // 2
+        collapsed = _collapse_similar_halves(parts[:mid], parts[mid:])
+        if collapsed:
+            return collapsed
+    words = w.split()
+    if len(words) >= 12 and len(words) % 2 == 0:
+        mid = len(words) // 2
+        collapsed = _collapse_similar_halves(words[:mid], words[mid:])
+        if collapsed:
+            return collapsed
+    return w
+
+
 def whisper_should_apply(vosk_text: str, whisper_text: str) -> bool:
     """Replace the VOSK phrase only when Whisper looks like a real correction."""
-    w = " ".join((whisper_text or "").split()).strip()
+    w = collapse_repeated_whisper(" ".join((whisper_text or "").split()).strip())
     v = " ".join((vosk_text or "").split()).strip()
     if not w or whisper_text_is_junk(w):
         return False
@@ -1140,6 +1183,8 @@ def whisper_should_apply(vosk_text: str, whisper_text: str) -> bool:
     if v:
         ratio = len(w) / float(max(len(v), 1))
         if ratio < 0.35 or ratio > 2.8:
+            return False
+        if len(v) >= 50 and ratio > 1.65:
             return False
     return True
 
@@ -1694,6 +1739,12 @@ def text_from_vosk_pipe(
             if apply_ok:
                 w = " ".join(result.split()).strip()
                 processed = process_fn(w) if w else ""
+                collapsed = collapse_repeated_whisper(processed)
+                if collapsed != processed:
+                    sys.stderr.write(
+                        "[nd-debug] whisper collapse %r -> %r\n" % (processed, collapsed)
+                    )
+                    processed = collapsed
                 apply_ok = bool(processed) and whisper_should_apply(job.get("vosk", ""), processed)
             if apply_ok and job is not None:
                 new = processed if processed.endswith(" ") else processed + " "

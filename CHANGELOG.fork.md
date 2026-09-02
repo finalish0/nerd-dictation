@@ -3,6 +3,15 @@
 Base: upstream `ideasman42/nerd-dictation` @ `41f3727` (2025-10-10).
 Script diff: see `git diff main --stat -- nerd-dictation`.
 
+## 2026-09-02
+
+### Whisper no longer echoes the sentence on long takes
+
+Clips ≥ ~4.5 s used `audio_ctx=0` (the ~30 s default). Whisper padded the
+phrase with silence and typed the same sentence twice — the backspace
+replace is what looked like “Rauslöschen”. The encoder window now always
+follows clip length. A trailing echo is collapsed before apply.
+
 ## 2026-08-31
 
 ### Optional Whisper `audio_ctx` from clip length
