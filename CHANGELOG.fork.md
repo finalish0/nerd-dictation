@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-09-02
 
+### Keep AhaKey / Grok / OpenCode out of this repo
+
+Desktop dictation is VOSK + Whisper + a Sway mic toggle. Pad LED, pad
+Enter, and Grok/OpenCode send-hooks belong in ahakey-x1 (or nowhere).
+`install.sh` no longer writes those paths; an existing `env` keeps extras.
+
+## 2026-09-02
+
 ### Installable desktop path + README
 
 `README.md` is the GitHub landing page (live VOSK, Whisper rescore, Super+n).

@@ -31,9 +31,8 @@ git merge main   # then resolve if needed
 ## What we actually changed
 
 The script `nerd-dictation` is patched (Wayland/wtype, dual VOSK, Whisper
-rescore). Machine-specific glue (systemd user unit, AhaKey toggle,
-OpenCode/Grok send-to-suspend, Whisper worker) lives under
-`contrib/desktop/` on **`local` only**.
+rescore). Desktop glue (systemd user unit, mic toggle, Whisper worker)
+lives under `contrib/desktop/` on **`local` only**.
 
 Details and dates: [CHANGELOG.fork.md](CHANGELOG.fork.md).
 
@@ -89,9 +88,9 @@ that span even if the next fragment has already started. Silence and
 
 ## Desktop glue (this branch only)
 
-systemd unit, mic toggle, Sway `Ctrl+Space`, OpenCode plugin and Grok
-`UserPromptSubmit` freeze live under [`contrib/desktop/`](contrib/desktop/).
-They are **not** on `main` and are not meant for an upstream PR. See
+systemd unit, mic toggle, and Sway `Ctrl+Space` live under
+[`contrib/desktop/`](contrib/desktop/). They are **not** on `main` and are
+not meant for an upstream PR. See
 [`contrib/desktop/README.md`](contrib/desktop/README.md).
 
 No vendored VOSK models.

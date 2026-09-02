@@ -5,8 +5,8 @@ Warm systemd daemon, mic toggle, Sway include. **Not for upstream `main`.**
 Users: start at the repo [README.md](../../README.md) and run
 `./contrib/desktop/install.sh`.
 
-That script is the install. It does **not** assume `$HOME/git/nerd-dictation`.
-AhaKey LED / pad-enter are optional (detected if `~/git/ahakey-x1` exists).
+That script does **not** assume a clone path. It writes
+`~/.config/nerd-dictation/env` (`ND`, `PYTHON`) and a user unit.
 
 ## Sway (once)
 
@@ -15,14 +15,8 @@ include ~/.config/sway/nerd-dictation.conf
 bindsym $mod+n exec --no-startup-id ~/.local/bin/nerd-dictation-toggle master
 ```
 
-`on`/`off` rewrites the include (`Ctrl+Space`, and pad Enter only while
-dictation is on). Super+n stays in the main config.
-
-## Optional hooks
-
-`opencode-ahakey-led.js` and `grok-hooks-ahakey-led.json` freeze dictation
-when that app sends a message. Copy only if you use those tools. Crush and
-any other focused window need nothing extra: nerd-dictation types keys.
+`on`/`off` rewrites the include (`Ctrl+Space`). Super+n stays in the main
+config. Dictation types into the focused window — no per-app plugin.
 
 ## Files
 

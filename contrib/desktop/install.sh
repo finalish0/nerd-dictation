@@ -135,16 +135,16 @@ if [ "$WITH_EN" = 1 ]; then
 fi
 
 umask 077
+old_extras=""
+if [ -f "$CONF/env" ]; then
+  old_extras=$(grep -E '^(AHAKEY|PAD_ENTER|AHAKEY_ENV|AHAKEY_SWAY_DEVICE)=' "$CONF/env" || true)
+fi
 {
   echo "# Written by contrib/desktop/install.sh — sourced by nerd-dictation-toggle."
   printf 'ND=%q\n' "$ND"
   printf 'PYTHON=%q\n' "$PYTHON"
-  if [ -x "$HOME/git/ahakey-x1/ahakey.sh" ]; then
-    printf 'AHAKEY=%q\n' "$HOME/git/ahakey-x1/ahakey.sh"
-  fi
-  if [ -x "$HOME/git/ahakey-x1/contrib/pad-enter.sh" ]; then
-    printf 'PAD_ENTER=%q\n' "$HOME/git/ahakey-x1/contrib/pad-enter.sh"
-    printf 'AHAKEY_ENV=%q\n' "$HOME/git/ahakey-x1/.env"
+  if [ -n "$old_extras" ]; then
+    printf '%s\n' "$old_extras"
   fi
 } > "$CONF/env"
 

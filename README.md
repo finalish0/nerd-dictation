@@ -19,16 +19,16 @@ Here the mic is a **warm daemon**. Press once (default `Ctrl+Space`):
    terminal, a browser, a chat composer.
 2. After a short pause, **Whisper re-reads that fragment** and replaces it
    in place (punctuation, capitals, `commit` instead of `komme mit`).
-3. Press the mic again (or the pad checkmark) to freeze. The process stays
-   in RAM; the next press is instant. No model reload.
+3. Press the mic again to freeze. The process stays in RAM; the next press
+   is instant. No model reload.
 
 German is the live model; a second small English VOSK can steal
 high-confidence words so code tokens survive. Whisper runs as a
 persistent worker (`pywhispercpp`), not a fresh process per phrase.
 
 A master switch (`Super+n` on Sway) turns the whole thing **off**. Then
-`Ctrl+Space` is just `Ctrl+Space` again — Grok Voice / Croc Dictator / the
-app. Dictation does not steal keys while it is off.
+`Ctrl+Space` is just `Ctrl+Space` again. Dictation does not steal keys
+while it is off.
 
 ## Install (Sway / Wayland)
 
@@ -64,14 +64,6 @@ nerd-dictation-toggle status
 
 Optional: `--no-models` if the models are already on disk,
 `--no-en` to skip the English VOSK, `--whisper-lang de` (default).
-
-## Optional: AhaKey pad
-
-If [ahakey-x1](https://github.com/finalish0/ahakey-x1) is installed, the
-toggle pulses the LED (breathing = recording) and, **only while dictation
-is on**, the pad checkmark means “freeze mic, then Enter” in the focused
-window. While dictation is off, the checkmark is plain Enter. Laptop Enter
-is never stolen. No pad? Ignore this; the keyboard bindings are enough.
 
 ## What it is not
 

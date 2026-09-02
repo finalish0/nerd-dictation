@@ -1266,7 +1266,7 @@ def text_from_vosk_pipe(
     elif not whisper_model:
         whisper_model = os.environ.get(
             "NERD_DICTATION_WHISPER_MODEL",
-            os.path.expanduser("~/.cache/opencode-voice/models/ggml-small.bin"),
+            os.path.expanduser("~/.local/share/nerd-dictation/models/ggml-small.bin"),
         )
     worker_py = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -2441,7 +2441,7 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             "Optional ggml Whisper model for phrase post-correction.\n"
             "VOSK still types word-by-word; Whisper only rewrites a finished phrase\n"
             "if the next one has not started. Empty uses NERD_DICTATION_WHISPER_MODEL\n"
-            "or ~/.cache/opencode-voice/models/ggml-small.bin when that file exists."
+            "or ~/.local/share/nerd-dictation/models/ggml-small.bin when that file exists."
         ),
         required=False,
     )

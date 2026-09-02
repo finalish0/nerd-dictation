@@ -1,7 +1,7 @@
 #!/bin/sh
 # Toggle / suspend / stop the warm nerd-dictation user service.
 # Master switch: on | off  (no Sway edits). Mic is a no-op while off.
-# Optional: AhaKey LED via $AHAKEY (pulse breathing | off).
+# Paths come from ~/.config/nerd-dictation/env (written by install.sh).
 set -eu
 
 SERVICE=nerd-dictation.service
@@ -14,20 +14,20 @@ if [ -f "$FLAGDIR/env" ]; then
   . "$FLAGDIR/env"
   set +a
 fi
-ND="${ND:-$HOME/git/nerd-dictation/nerd-dictation}"
-AHAKEY="${AHAKEY:-$HOME/git/ahakey-x1/ahakey.sh}"
+ND="${ND:-}"
+AHAKEY="${AHAKEY:-}"
+PAD_ENTER="${PAD_ENTER:-}"
+AHAKEY_ENV="${AHAKEY_ENV:-}"
 PIDFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/nerd-dictation.pid"
 SWAYBIND="${SWAYBIND:-$HOME/.config/sway/nerd-dictation.conf}"
 TOGGLE_BIN="${TOGGLE_BIN:-$HOME/.local/bin/nerd-dictation-toggle}"
-PAD_ENTER="${PAD_ENTER:-$HOME/git/ahakey-x1/contrib/pad-enter.sh}"
-AHAKEY_ENV="${AHAKEY_ENV:-$HOME/git/ahakey-x1/.env}"
 PAD_DEVICE="${AHAKEY_SWAY_DEVICE:-}"
-if [ -z "$PAD_DEVICE" ] && [ -f "$AHAKEY_ENV" ]; then
+if [ -z "$PAD_DEVICE" ] && [ -n "$AHAKEY_ENV" ] && [ -f "$AHAKEY_ENV" ]; then
   PAD_DEVICE=$(awk -F= '/^AHAKEY_SWAY_DEVICE=/{print $2; exit}' "$AHAKEY_ENV")
 fi
 BIND_CMD="bindsym Ctrl+Space exec --no-startup-id $TOGGLE_BIN"
 PAD_ENTER_CMD=""
-if [ -n "$PAD_DEVICE" ] && [ -x "$PAD_ENTER" ]; then
+if [ -n "$PAD_DEVICE" ] && [ -n "$PAD_ENTER" ] && [ -x "$PAD_ENTER" ]; then
   PAD_ENTER_CMD="bindsym --input-device=$PAD_DEVICE --no-repeat Return exec --no-startup-id $PAD_ENTER"
 fi
 
@@ -73,7 +73,7 @@ master_off() {
   systemctl --user disable --now "$SERVICE" 2>>"$LOG" || true
   unbind_mic
   pulse off
-  echo "nerd-dictation: off (Ctrl+Space goes to the app, e.g. Grok voice)"
+  echo "nerd-dictation: off (Ctrl+Space goes to the focused app)"
   notify "aus — Ctrl+Space ist frei"
 }
 
