@@ -5,6 +5,7 @@ Nerd Dictation
 .. note::
 
    This is a **fork** (`finalish0/nerd-dictation`).
+   Landing page and install: ``README.md``.
    Working patches live on branch ``local`` — see ``FORK.md`` and
    ``CHANGELOG.fork.md``.
    Upstream: https://github.com/ideasman42/nerd-dictation

@@ -1,0 +1,14 @@
+[Unit]
+Description=nerd-dictation warm daemon (model preloaded, suspended, mic closed)
+
+[Service]
+Environment=NERD_DICTATION_WHISPER_LANG=@WHISPER_LANG@
+Environment=NERD_DICTATION_SILENCE_MS=700
+Environment=NERD_DICTATION_FREEZE_MS=280
+Environment=NERD_DICTATION_WHISPER_AUDIO_CTX=auto
+ExecStart=@PYTHON@ @ND@ begin @VOSK_ARGS@ --whisper-model=@WHISPER@ --whisper-threads=8 --simulate-input-tool=WTYPE --input=PAREC --sample-rate=16000 --continuous --suspend-on-start
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

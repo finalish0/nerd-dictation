@@ -5,6 +5,14 @@ Script diff: see `git diff main --stat -- nerd-dictation`.
 
 ## 2026-09-02
 
+### Installable desktop path + README
+
+`README.md` is the GitHub landing page (live VOSK, Whisper rescore, Super+n).
+`contrib/desktop/install.sh` creates the venv, fetches models, and writes a
+user unit without assuming `$HOME/git/nerd-dictation`.
+
+## 2026-09-02
+
 ### Whisper no longer echoes the sentence on long takes
 
 Clips ≥ ~4.5 s used `audio_ctx=0` (the ~30 s default). Whisper padded the

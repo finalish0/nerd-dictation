@@ -1,5 +1,8 @@
 # This fork (`finalish0/nerd-dictation`)
 
+**Want to use it?** See [README.md](README.md) (`./contrib/desktop/install.sh`).
+This file is the engineering log.
+
 Fork of [ideasman42/nerd-dictation](https://github.com/ideasman42/nerd-dictation)
 (offline speech-to-text via VOSK). The working patches live on branch
 **`local`**. Branch **`main`** tracks upstream and stays clean for rebases.

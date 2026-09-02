@@ -4,12 +4,18 @@
 # Optional: AhaKey LED via $AHAKEY (pulse breathing | off).
 set -eu
 
-ND="${ND:-$HOME/git/nerd-dictation/nerd-dictation}"
-AHAKEY="${AHAKEY:-$HOME/git/ahakey-x1/ahakey.sh}"
 SERVICE=nerd-dictation.service
 LOG="${LOG:-$HOME/.local/state/nerd-dictation.log}"
 FLAGDIR="${FLAGDIR:-$HOME/.config/nerd-dictation}"
 FLAG="$FLAGDIR/disabled"
+if [ -f "$FLAGDIR/env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  . "$FLAGDIR/env"
+  set +a
+fi
+ND="${ND:-$HOME/git/nerd-dictation/nerd-dictation}"
+AHAKEY="${AHAKEY:-$HOME/git/ahakey-x1/ahakey.sh}"
 PIDFILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/nerd-dictation.pid"
 SWAYBIND="${SWAYBIND:-$HOME/.config/sway/nerd-dictation.conf}"
 TOGGLE_BIN="${TOGGLE_BIN:-$HOME/.local/bin/nerd-dictation-toggle}"
